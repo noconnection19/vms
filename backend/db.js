@@ -1,5 +1,8 @@
 require('dotenv').config();
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// Parse PostgreSQL DATE type (OID 1082) directly as string 'YYYY-MM-DD' without converting to JS Date/UTC
+types.setTypeParser(1082, (val) => val);
 
 const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:OtQnMrOtrFKxyhRWKoIyxDqwWonzCkmi@tramway.proxy.rlwy.net:27034/railway';
 
@@ -13,14 +16,17 @@ pool.on('error', (err) => {
 
 function normalizeRow(row) {
   if (!row || typeof row !== 'object') return row;
-  const newRow = { ...row };
-  for (const key of Object.keys(row)) {
-    const upper = key.toUpperCase();
-    const lower = key.toLowerCase();
-    newRow[upper] = row[key];
-    newRow[lower] = row[key];
-  }
-  return newRow;
+  return new Proxy(row, {
+    get(target, prop, receiver) {
+      if (typeof prop === 'string' && !(prop in target)) {
+        const lower = prop.toLowerCase();
+        const upper = prop.toUpperCase();
+        if (lower in target) return target[lower];
+        if (upper in target) return target[upper];
+      }
+      return Reflect.get(target, prop, receiver);
+    }
+  });
 }
 
 function convertSql(sql) {
@@ -152,6 +158,9 @@ async function initDatabase() {
         CREATED_DT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // Sync any card names with master user name
+    await pool.query('UPDATE MASTER_CARD c SET NAME = u.NAME FROM MASTER_USER u WHERE c.PHONE_NO = u.PHONE_NO AND (c.NAME IS NULL OR c.NAME <> u.NAME)');
 
     // Seed default data if empty
     const adminCheck = await get('SELECT COUNT(*) as count FROM MASTER_ADMIN');

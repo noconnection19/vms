@@ -113,9 +113,10 @@ router.post('/check-out', async (req, res) => {
 router.get('/visits', async (req, res) => {
   try {
     const visits = await db.all(`
-      SELECT v.*, c.NAME as card_name, c.CARD_TYPE as card_type
+      SELECT v.*, COALESCE(u.NAME, c.NAME) as card_name, c.CARD_TYPE as card_type
       FROM TRANSACTION_VISIT v
       LEFT JOIN MASTER_CARD c ON v.CARD_NO = c.CARD_NO
+      LEFT JOIN MASTER_USER u ON c.PHONE_NO = u.PHONE_NO
       ORDER BY v.CHECK_IN DESC
       LIMIT 50
     `);

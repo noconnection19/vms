@@ -17,10 +17,24 @@ import {
   Camera,
   WarningCircle,
   Sparkle,
+  CircleNotch,
 } from '@phosphor-icons/react';
 
 
 import { API_BASE_URL as API_BASE } from '../config';
+
+const parseOcrDate = (dateStr) => {
+  if (!dateStr) return '';
+  const str = String(dateStr).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  const parts = str.split(/[-/.]/);
+  if (parts.length === 3) {
+    const [d, m, y] = parts;
+    if (d.length === 4) return `${d}-${m.padStart(2, '0')}-${y.padStart(2, '0')}`;
+    if (y.length === 4) return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  return str;
+};
 
 export default function VisitorsPage() {
   const { toast, confirm } = useToast();
@@ -46,16 +60,17 @@ export default function VisitorsPage() {
     placeOfBirth: '',
     birthday: '',
     address: '',
-    cardType: 'KTP',
-    cardNo: '',
     userType: 'REGULAR',
-    cardAttachmentId: null,
     photoAttachmentId: null,
+    cards: [
+      { cardType: 'KTP', cardNo: '', cardAttachmentId: null, previewUrl: null }
+    ],
   });
 
-  const [cardPreviewUrl, setCardPreviewUrl] = useState(null);
   const [facePreviewUrl, setFacePreviewUrl] = useState(null);
-  const [ocrLoading, setOcrLoading] = useState(false);
+  const [cardUploadingIdx, setCardUploadingIdx] = useState(null);
+  const [faceLoading, setFaceLoading] = useState(false);
+  const [extraCardUploadingIdx, setExtraCardUploadingIdx] = useState(null);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [formMsg, setFormMsg] = useState({ type: '', text: '' });
 
@@ -118,16 +133,75 @@ export default function VisitorsPage() {
     setSelectedVisitor(visitor);
     const primaryCard = visitor.cards?.[0];
     setEditForm({
-      phoneNo: visitor.phoneNo || '',
-      name: visitor.name || '',
-      gender: visitor.gender || 'L',
-      placeOfBirth: visitor.PLACE_OF_BIRTH || '',
-      address: visitor.address || '',
-      cardType: primaryCard?.CARD_TYPE || 'KTP',
-      cardNo: primaryCard?.CARD_NO || '',
-      userType: visitor.USER_TYPE || 'REGULAR',
+      phoneNo: visitor.phoneNo || visitor.phone_no || visitor.PHONE_NO || '',
+      name: visitor.name || visitor.NAME || '',
+      gender: visitor.gender || visitor.GENDER || 'L',
+      placeOfBirth: visitor.placeOfBirth || visitor.place_of_birth || visitor.PLACE_OF_BIRTH || '',
+      birthday: parseOcrDate(visitor.birthday || visitor.BIRTHDAY || ''),
+      address: visitor.address || visitor.ADDRESS || '',
+      cardType: primaryCard?.card_type || primaryCard?.CARD_TYPE || 'KTP',
+      cardNo: primaryCard?.card_no || primaryCard?.CARD_NO || '',
+      cardAttachmentId: primaryCard?.card_attachment_id || primaryCard?.CARD_ATTACHMENT_ID || null,
+      userType: visitor.userType || visitor.user_type || visitor.USER_TYPE || 'REGULAR',
+      additionalCards: [],
     });
     setShowEditModal(true);
+  };
+
+  const handleEditCardImageUpload = async (idx, file) => {
+    if (!file) return;
+    setExtraCardUploadingIdx(idx);
+    const formData = new FormData();
+    formData.append('file', file);
+    const cardType = editForm.additionalCards[idx]?.cardType || 'SIM';
+    formData.append('cardType', cardType);
+
+    try {
+      const res = await fetch(`${API_BASE}/visitor/scan-ocr`, { method: 'POST', body: formData });
+      const data = await res.json();
+      const updated = [...(editForm.additionalCards || [])];
+      if (data.attachmentId) {
+        updated[idx].cardAttachmentId = data.attachmentId;
+      }
+      if (data.ocrResult && data.ocrResult.card_no) {
+        updated[idx].cardNo = data.ocrResult.card_no;
+      }
+      updated[idx].previewUrl = URL.createObjectURL(file);
+      setEditForm((prev) => ({ ...prev, additionalCards: updated }));
+      toast.success('Card image uploaded successfully.');
+    } catch (err) {
+      toast.error('Failed to upload card image: ' + err.message);
+    } finally {
+      setExtraCardUploadingIdx(null);
+    }
+  };
+
+  const handleAddExtraCardImageUpload = async (idx, file) => {
+    if (!file) return;
+    setAddExtraUploadingIdx(idx);
+    const formData = new FormData();
+    formData.append('file', file);
+    const cardType = singleForm.additionalCards[idx]?.cardType || 'SIM';
+    formData.append('cardType', cardType);
+
+    try {
+      const res = await fetch(`${API_BASE}/visitor/scan-ocr`, { method: 'POST', body: formData });
+      const data = await res.json();
+      const updated = [...(singleForm.additionalCards || [])];
+      if (data.attachmentId) {
+        updated[idx].cardAttachmentId = data.attachmentId;
+      }
+      if (data.ocrResult && data.ocrResult.card_no) {
+        updated[idx].cardNo = data.ocrResult.card_no;
+      }
+      updated[idx].previewUrl = URL.createObjectURL(file);
+      setSingleForm((prev) => ({ ...prev, additionalCards: updated }));
+      toast.success('Additional card image uploaded successfully.');
+    } catch (err) {
+      toast.error('Failed to upload card image: ' + err.message);
+    } finally {
+      setAddExtraUploadingIdx(null);
+    }
   };
 
   const handleDelete = async (phoneNo, name) => {
@@ -151,18 +225,43 @@ export default function VisitorsPage() {
     }
   };
 
-  // OCR Scan File Selection
-  const handleCardFileSelect = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const handleDeleteCard = async (cardNo) => {
+    const isConfirmed = await confirm({
+      title: 'Delete Access Card',
+      message: `Are you sure you want to delete card ${cardNo}?`,
+      isDanger: true,
+      confirmText: 'Yes, Delete Card',
+      cancelText: 'Cancel',
+    });
 
-    setCardPreviewUrl(URL.createObjectURL(file));
-    setOcrLoading(true);
+    if (!isConfirmed) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/visitor/card/${cardNo}`, { method: 'DELETE' });
+      const data = await res.json();
+      toast.success(data.message || 'Card deleted successfully.');
+      fetchVisitors();
+      if (selectedVisitor) {
+        setSelectedVisitor({
+          ...selectedVisitor,
+          cards: (selectedVisitor.cards || []).filter(c => (c.CARD_NO || c.card_no) !== cardNo)
+        });
+      }
+    } catch (err) {
+      toast.error('Failed to delete card: ' + err.message);
+    }
+  };
+
+  // OCR Scan File Selection for any card index in singleForm.cards
+  const handleCardImageUpload = async (idx, file) => {
+    if (!file) return;
+    setCardUploadingIdx(idx);
     setFormMsg({ type: '', text: '' });
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('cardType', singleForm.cardType);
+    const cardType = singleForm.cards[idx]?.cardType || 'KTP';
+    formData.append('cardType', cardType);
 
     try {
       const res = await fetch(`${API_BASE}/visitor/scan-ocr`, {
@@ -170,29 +269,37 @@ export default function VisitorsPage() {
         body: formData,
       });
       const data = await res.json();
+      const updatedCards = [...singleForm.cards];
 
       if (data.attachmentId) {
-        setSingleForm((prev) => ({ ...prev, cardAttachmentId: data.attachmentId }));
+        updatedCards[idx].cardAttachmentId = data.attachmentId;
       }
 
       if (data.ocrResult) {
         const ocr = data.ocrResult;
-        setSingleForm((prev) => ({
-          ...prev,
-          cardNo: ocr.card_no || prev.cardNo,
-          name: ocr.name || prev.name,
-          gender: ocr.gender || prev.gender,
-          placeOfBirth: ocr.place_of_birth || prev.placeOfBirth,
-          address: ocr.address || prev.address,
-        }));
-        setFormMsg({ type: 'success', text: 'ID card OCR scan result extracted automatically!' });
-        toast.info('ID card data extracted via OCR.', 'OCR Scan Complete');
+        if (ocr.card_no) updatedCards[idx].cardNo = ocr.card_no;
+        if (idx === 0) {
+          setSingleForm((prev) => ({
+            ...prev,
+            name: ocr.name || prev.name,
+            gender: ocr.gender || prev.gender,
+            placeOfBirth: ocr.place_of_birth || prev.placeOfBirth,
+            birthday: parseOcrDate(ocr.birthday) || prev.birthday,
+            address: ocr.address || prev.address,
+          }));
+          setFormMsg({ type: 'success', text: 'ID card OCR scan result extracted automatically!' });
+          toast.info('ID card data extracted via OCR.', 'OCR Scan Complete');
+        } else {
+          toast.success('Card image uploaded and scanned successfully.');
+        }
       }
+      updatedCards[idx].previewUrl = URL.createObjectURL(file);
+      setSingleForm((prev) => ({ ...prev, cards: updatedCards }));
     } catch (err) {
       setFormMsg({ type: 'error', text: 'Failed OCR scan: ' + err.message });
       toast.error('Failed to process OCR: ' + err.message);
     } finally {
-      setOcrLoading(false);
+      setCardUploadingIdx(null);
     }
   };
 
@@ -202,6 +309,7 @@ export default function VisitorsPage() {
     if (!file) return;
 
     setFacePreviewUrl(URL.createObjectURL(file));
+    setFaceLoading(true);
     const formData = new FormData();
     formData.append('file', file);
 
@@ -217,15 +325,19 @@ export default function VisitorsPage() {
       }
     } catch (err) {
       console.error(err);
+      toast.error('Failed to upload face photo: ' + err.message);
+    } finally {
+      setFaceLoading(false);
     }
   };
 
   // Single Form Submit
   const handleSingleSubmit = async (e) => {
     e.preventDefault();
-    if (!singleForm.phoneNo || !singleForm.cardNo || !singleForm.name) {
-      setFormMsg({ type: 'error', text: 'Phone number, Name, and Card number are required.' });
-      toast.warning('Phone number, Name, and Card number are required.');
+    const primaryCard = singleForm.cards[0];
+    if (!singleForm.phoneNo || !primaryCard?.cardNo || !singleForm.name) {
+      setFormMsg({ type: 'error', text: 'Phone number, Name, and Primary Card number are required.' });
+      toast.warning('Phone number, Name, and Primary Card number are required.');
       return;
     }
 
@@ -233,15 +345,31 @@ export default function VisitorsPage() {
     setFormMsg({ type: '', text: '' });
 
     try {
+      const validCards = singleForm.cards.filter((c) => c && c.cardNo && c.cardNo.trim() !== '');
+
       const res = await fetch(`${API_BASE}/visitor/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(singleForm),
+        body: JSON.stringify({
+          phoneNo: singleForm.phoneNo,
+          name: singleForm.name,
+          gender: singleForm.gender,
+          placeOfBirth: singleForm.placeOfBirth,
+          birthday: singleForm.birthday,
+          address: singleForm.address,
+          userType: singleForm.userType,
+          photoAttachmentId: singleForm.photoAttachmentId,
+          cards: validCards.map((c) => ({
+            cardNo: c.cardNo.trim(),
+            cardType: c.cardType || 'KTP',
+            cardAttachmentId: c.cardAttachmentId || null,
+          })),
+        }),
       });
       const data = await res.json();
 
       if (res.ok) {
-        toast.success(`Visitor ${singleForm.name} registered successfully!`, 'Registration Successful');
+        toast.success(`Visitor ${singleForm.name} registered successfully with ${validCards.length} card(s)!`, 'Registration Successful');
         setShowAddModal(false);
         resetAddForm();
         fetchVisitors();
@@ -326,11 +454,11 @@ export default function VisitorsPage() {
       placeOfBirth: '',
       birthday: '',
       address: '',
-      cardType: 'KTP',
-      cardNo: '',
       userType: 'REGULAR',
-      cardAttachmentId: null,
       photoAttachmentId: null,
+      cards: [
+        { cardType: 'KTP', cardNo: '', cardAttachmentId: null, previewUrl: null }
+      ],
     });
     setGroupForm({
       sponsorName: '',
@@ -341,7 +469,6 @@ export default function VisitorsPage() {
         { name: '', cardNo: '', cardType: 'KTP' },
       ],
     });
-    setCardPreviewUrl(null);
     setFacePreviewUrl(null);
     setFormMsg({ type: '', text: '' });
   };
@@ -365,9 +492,9 @@ export default function VisitorsPage() {
     const matchesSearch =
       v.phoneNo?.toLowerCase().includes(term) ||
       v.name?.toLowerCase().includes(term) ||
-      v.cards?.some((c) => c.CARD_NO?.toLowerCase().includes(term));
+      v.cards?.some((c) => (c.card_no || c.CARD_NO)?.toLowerCase().includes(term));
 
-    const matchesType = filterType === 'ALL' || (v.USER_TYPE || 'REGULAR') === filterType;
+    const matchesType = filterType === 'ALL' || (v.userType || v.USER_TYPE || 'REGULAR') === filterType;
     return matchesSearch && matchesType;
   });
 
@@ -447,13 +574,13 @@ export default function VisitorsPage() {
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {filteredVisitors.length > 0 ? (
-                filteredVisitors.map((v) => {
+                filteredVisitors.map((v, index) => {
                   const primaryCard = v.cards?.[0];
-                  const hasPhoto = !!v.photoAttachmentId;
-                  const photoUrl = hasPhoto ? `${API_BASE}/visitor/attachment/${v.photoAttachmentId}` : null;
+                  const photoId = v.photoAttachmentId || v.PHOTO_ATTACHMENT_ID;
+                  const photoUrl = photoId ? `${API_BASE}/visitor/attachment/${photoId}` : null;
 
                   return (
-                    <tr key={v.phoneNo} className="hover:bg-slate-800/30 transition-colors">
+                    <tr key={v.phoneNo || v.PHONE_NO || `visitor-${index}`} className="hover:bg-slate-800/30 transition-colors">
                       <td className="px-4 py-3">
                         <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-800 overflow-hidden flex items-center justify-center text-slate-500">
                           {photoUrl ? (
@@ -482,14 +609,18 @@ export default function VisitorsPage() {
                       </td>
                       <td className="px-4 py-3 font-mono text-emerald-400 font-medium">{v.phoneNo}</td>
                       <td className="px-4 py-3">
-                        {primaryCard ? (
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="px-1.5 py-0.5 bg-slate-950 border border-slate-800 text-slate-300 rounded text-[10px] font-mono font-bold">
-                                {primaryCard.CARD_TYPE}
-                              </span>
-                              <span className="font-mono text-white font-medium">{primaryCard.CARD_NO}</span>
-                            </div>
+                        {v.cards && v.cards.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 max-w-xs">
+                            {v.cards.map((card, cIdx) => (
+                              <div key={cIdx} className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 px-2 py-0.5 rounded">
+                                <span className="px-1 py-0.2 bg-slate-900 border border-slate-800 text-emerald-400 rounded text-[9px] font-mono font-bold">
+                                  {card.card_type || card.CARD_TYPE}
+                                </span>
+                                <span className="font-mono text-white text-xs font-medium">
+                                  {card.card_no || card.CARD_NO}
+                                </span>
+                              </div>
+                            ))}
                           </div>
                         ) : (
                           <span className="text-slate-600">—</span>
@@ -538,9 +669,10 @@ export default function VisitorsPage() {
 
       {/* ==================== MODAL 1: TAMBAH VISITOR ==================== */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-5 my-8">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900">
               <div>
                 <h3 className="text-base font-bold text-white">Add New Visitor (Reception Desk)</h3>
                 <p className="text-xs text-slate-400">Enter individual or group visitor details</p>
@@ -553,8 +685,9 @@ export default function VisitorsPage() {
               </button>
             </div>
 
-            {/* Modal Tabs */}
-            <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+            {/* Modal Tabs & Body */}
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
               <button
                 type="button"
                 onClick={() => setAddTab('single')}
@@ -619,61 +752,126 @@ export default function VisitorsPage() {
                   </div>
                 </div>
 
-                {/* Card Scan OCR Section */}
-                <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                {/* Unified Access Cards Section */}
+                <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-xs font-semibold text-white">
                       <IdentificationCard size={18} className="text-emerald-400" />
-                      <span>ID Card & Auto OCR Scan</span>
+                      <span>Access Cards & ID Information</span>
                     </div>
-                    {ocrLoading && (
-                      <span className="text-[11px] text-amber-400 flex items-center gap-1.5 animate-pulse">
-                        <Sparkle size={14} /> Processing OCR...
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSingleForm((prev) => ({
+                          ...prev,
+                          cards: [
+                            ...prev.cards,
+                            { cardType: 'SIM', cardNo: '', cardAttachmentId: null, previewUrl: null },
+                          ],
+                        }))
+                      }
+                      className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition-colors"
+                    >
+                      <Plus size={14} /> Add Another Card
+                    </button>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className={labelClass}>Card Type</label>
-                      <select
-                        value={singleForm.cardType}
-                        onChange={(e) => setSingleForm({ ...singleForm, cardType: e.target.value })}
-                        className={inputClass}
-                      >
-                        <option value="KTP">KTP</option>
-                        <option value="SIM">SIM</option>
-                        <option value="PASSPORT">PASSPORT</option>
-                      </select>
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className={labelClass}>Card No. / ID Number *</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. 3171012304900001"
-                        value={singleForm.cardNo}
-                        onChange={(e) => setSingleForm({ ...singleForm, cardNo: e.target.value })}
-                        className={inputClass}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className={labelClass}>Upload ID Card (Auto OCR Scan)</label>
-                    <div className="flex items-center gap-3">
-                      <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs px-3.5 py-2 rounded-xl flex items-center gap-2 transition-colors">
-                        <Upload size={16} />
-                        <span>Select ID File</span>
-                        <input type="file" accept="image/*" onChange={handleCardFileSelect} className="hidden" />
-                      </label>
-                      {cardPreviewUrl && (
-                        <div className="w-12 h-8 rounded border border-slate-700 overflow-hidden shrink-0">
-                          <img src={cardPreviewUrl} alt="Card Preview" className="w-full h-full object-cover" />
+                  <div className="space-y-3">
+                    {singleForm.cards.map((card, idx) => (
+                      <div key={idx} className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between text-xs font-semibold text-slate-300 border-b border-slate-800/80 pb-2">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-5 h-5 rounded-full bg-slate-900 border border-slate-700 flex items-center justify-center text-[10px] text-emerald-400 font-bold">
+                              {idx + 1}
+                            </span>
+                            {idx === 0 ? 'Primary Access Card *' : `Additional Access Card #${idx + 1}`}
+                          </span>
+                          {idx > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = singleForm.cards.filter((_, i) => i !== idx);
+                                setSingleForm({ ...singleForm, cards: updated });
+                              }}
+                              className="text-slate-400 hover:text-rose-400 p-1 rounded hover:bg-rose-500/10 transition-colors"
+                              title="Remove Card"
+                            >
+                              <Trash size={14} />
+                            </button>
+                          )}
                         </div>
-                      )}
-                    </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div>
+                            <label className={labelClass}>Card Type</label>
+                            <select
+                              value={card.cardType}
+                              onChange={(e) => {
+                                const updated = [...singleForm.cards];
+                                updated[idx].cardType = e.target.value;
+                                setSingleForm({ ...singleForm, cards: updated });
+                              }}
+                              className={inputClass}
+                            >
+                              <option value="KTP">KTP</option>
+                              <option value="SIM">SIM</option>
+                              <option value="PASSPORT">PASSPORT</option>
+                              <option value="RFID">RFID</option>
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className={labelClass}>Card No. / ID Number {idx === 0 ? '*' : ''}</label>
+                            <input
+                              type="text"
+                              required={idx === 0}
+                              placeholder={idx === 0 ? 'e.g. 3171012304900001' : 'Enter card / ID number...'}
+                              value={card.cardNo}
+                              onChange={(e) => {
+                                const updated = [...singleForm.cards];
+                                updated[idx].cardNo = e.target.value;
+                                setSingleForm({ ...singleForm, cards: updated });
+                              }}
+                              className={inputClass}
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className={labelClass}>Upload ID Card (Auto OCR Scan)</label>
+                          <div className="flex items-center gap-3">
+                            <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs px-3.5 py-2 rounded-xl flex items-center gap-2 transition-colors">
+                              {cardUploadingIdx === idx ? (
+                                <>
+                                  <CircleNotch size={16} className="animate-spin text-emerald-400" />
+                                  <span className="text-emerald-400 font-semibold">Scanning OCR...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Upload size={16} />
+                                  <span>Select ID File</span>
+                                </>
+                              )}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                disabled={cardUploadingIdx === idx}
+                                onChange={(e) => handleCardImageUpload(idx, e.target.files[0])}
+                                className="hidden"
+                              />
+                            </label>
+                            {card.previewUrl && (
+                              <div className="w-12 h-8 rounded border border-slate-700 overflow-hidden shrink-0">
+                                <img src={card.previewUrl} alt="Card Preview" className="w-full h-full object-cover" />
+                              </div>
+                            )}
+                            {card.cardAttachmentId && !card.previewUrl && (
+                              <span className="text-[10px] text-emerald-400 font-semibold">Image Attached</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -715,15 +913,25 @@ export default function VisitorsPage() {
                     />
                   </div>
                   <div>
-                    <label className={labelClass}>Address</label>
+                    <label className={labelClass}>Date of Birth</label>
                     <input
-                      type="text"
-                      placeholder="Enter residential address"
-                      value={singleForm.address}
-                      onChange={(e) => setSingleForm({ ...singleForm, address: e.target.value })}
+                      type="date"
+                      value={singleForm.birthday}
+                      onChange={(e) => setSingleForm({ ...singleForm, birthday: e.target.value })}
                       className={inputClass}
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Address</label>
+                  <input
+                    type="text"
+                    placeholder="Enter residential address"
+                    value={singleForm.address}
+                    onChange={(e) => setSingleForm({ ...singleForm, address: e.target.value })}
+                    className={inputClass}
+                  />
                 </div>
 
                 {/* Face Photo Section */}
@@ -731,9 +939,18 @@ export default function VisitorsPage() {
                   <label className={labelClass}>Upload Visitor Photo</label>
                   <div className="flex items-center gap-3">
                     <label className="cursor-pointer bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs px-3.5 py-2 rounded-xl flex items-center gap-2 transition-colors">
-                      <Camera size={16} className="text-emerald-400" />
-                      <span>Upload Photo</span>
-                      <input type="file" accept="image/*" onChange={handleFaceFileSelect} className="hidden" />
+                      {faceLoading ? (
+                        <>
+                          <CircleNotch size={16} className="animate-spin text-emerald-400" />
+                          <span className="text-emerald-400 font-semibold">Uploading Photo...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Camera size={16} className="text-emerald-400" />
+                          <span>Upload Photo</span>
+                        </>
+                      )}
+                      <input type="file" accept="image/*" disabled={faceLoading} onChange={handleFaceFileSelect} className="hidden" />
                     </label>
                     {facePreviewUrl && (
                       <div className="w-9 h-9 rounded-full border border-emerald-500/40 overflow-hidden shrink-0">
@@ -807,7 +1024,7 @@ export default function VisitorsPage() {
 
                   <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                     {groupForm.members.map((member, idx) => (
-                      <div key={idx} className="flex items-center gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                      <div key={`group-member-${idx}`} className="flex items-center gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
                         <span className="text-xs text-slate-500 font-mono w-5">{idx + 1}.</span>
                         <input
                           type="text"
@@ -863,6 +1080,7 @@ export default function VisitorsPage() {
                 </div>
               </form>
             )}
+            </div>
           </div>
         </div>
       )}
@@ -870,13 +1088,17 @@ export default function VisitorsPage() {
       {/* ==================== MODAL 2: DETAIL VISITOR ==================== */}
       {showDetailModal && selectedVisitor && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900">
               <h3 className="text-base font-bold text-white">Visitor Profile Details</h3>
               <button onClick={() => setShowDetailModal(false)} className="p-1 text-slate-400 hover:text-white rounded-lg">
                 <X size={20} />
               </button>
             </div>
+
+            {/* Scrollable Body */}
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
 
             {detailLoading ? (
               <div className="py-12 text-center text-xs text-slate-400">Loading details...</div>
@@ -915,6 +1137,10 @@ export default function VisitorsPage() {
                     <span className="text-white font-medium">{detailData?.placeOfBirth || '—'}</span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-slate-800/60">
+                    <span className="text-slate-400">Date of Birth</span>
+                    <span className="text-white font-medium">{detailData?.birthday ? String(detailData.birthday).split('T')[0] : '—'}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/60">
                     <span className="text-slate-400">Address</span>
                     <span className="text-white font-medium truncate max-w-xs">{detailData?.address || '—'}</span>
                   </div>
@@ -923,12 +1149,12 @@ export default function VisitorsPage() {
                 {/* Card Info */}
                 <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
                   <div className="text-xs font-semibold text-white">Access Card & ID Information</div>
-                  {detailData?.cards?.map((c) => (
-                    <div key={c.CARD_NO} className="flex items-center justify-between text-xs pt-1">
+                  {detailData?.cards?.map((c, idx) => (
+                    <div key={c.CARD_NO || c.card_no || `card-${idx}`} className="flex items-center justify-between text-xs pt-1">
                       <span className="px-2 py-0.5 bg-slate-900 border border-slate-700 text-emerald-400 rounded font-mono font-bold">
-                        {c.CARD_TYPE}
+                        {c.CARD_TYPE || c.card_type}
                       </span>
-                      <span className="font-mono text-white font-semibold">{c.CARD_NO}</span>
+                      <span className="font-mono text-white font-semibold">{c.CARD_NO || c.card_no}</span>
                     </div>
                   ))}
                 </div>
@@ -943,6 +1169,7 @@ export default function VisitorsPage() {
                 </div>
               </div>
             )}
+            </div>
           </div>
         </div>
       )}
@@ -950,77 +1177,229 @@ export default function VisitorsPage() {
       {/* ==================== MODAL 3: EDIT VISITOR ==================== */}
       {showEditModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900">
               <h3 className="text-base font-bold text-white">Edit Visitor Data</h3>
               <button onClick={() => setShowEditModal(false)} className="p-1 text-slate-400 hover:text-white rounded-lg">
                 <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleEditSubmit} className="space-y-3">
-              <div>
-                <label className={labelClass}>Phone Number (Read-Only)</label>
-                <input type="text" disabled value={editForm.phoneNo} className={`${inputClass} opacity-60`} />
-              </div>
-
-              <div>
-                <label className={labelClass}>Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  className={inputClass}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+            {/* Modal Form & Scrollable Body */}
+            <form onSubmit={handleEditSubmit} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-5 overflow-y-auto space-y-4 flex-1">
                 <div>
-                  <label className={labelClass}>Gender</label>
-                  <select
-                    value={editForm.gender}
-                    onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}
-                    className={inputClass}
-                  >
-                    <option value="L">Male</option>
-                    <option value="P">Female</option>
-                  </select>
+                  <label className={labelClass}>Phone Number (Read-Only)</label>
+                  <input type="text" disabled value={editForm.phoneNo} className={`${inputClass} opacity-60`} />
                 </div>
+
                 <div>
-                  <label className={labelClass}>Visitor Type</label>
-                  <select
-                    value={editForm.userType}
-                    onChange={(e) => setEditForm({ ...editForm, userType: e.target.value })}
+                  <label className={labelClass}>Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                     className={inputClass}
-                  >
-                    <option value="REGULAR">REGULAR</option>
-                    <option value="VIP">VIP</option>
-                  </select>
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelClass}>Gender</label>
+                    <select
+                      value={editForm.gender}
+                      onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}
+                      className={inputClass}
+                    >
+                      <option value="L">Male</option>
+                      <option value="P">Female</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelClass}>Visitor Type</label>
+                    <select
+                      value={editForm.userType}
+                      onChange={(e) => setEditForm({ ...editForm, userType: e.target.value })}
+                      className={inputClass}
+                    >
+                      <option value="REGULAR">REGULAR</option>
+                      <option value="VIP">VIP</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelClass}>Place of Birth</label>
+                    <input
+                      type="text"
+                      value={editForm.placeOfBirth}
+                      onChange={(e) => setEditForm({ ...editForm, placeOfBirth: e.target.value })}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Date of Birth</label>
+                    <input
+                      type="date"
+                      value={editForm.birthday}
+                      onChange={(e) => setEditForm({ ...editForm, birthday: e.target.value })}
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+
+                {/* Registered Cards Section */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className={labelClass}>Registered Access Cards</label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          additionalCards: [
+                            ...(prev.additionalCards || []),
+                            { cardNo: '', cardType: 'SIM', cardAttachmentId: null, previewUrl: null },
+                          ],
+                        }))
+                      }
+                      className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition-colors"
+                    >
+                      + Add New Card
+                    </button>
+                  </div>
+
+                  {selectedVisitor?.cards && selectedVisitor.cards.length > 0 ? (
+                    <div className="space-y-1.5 mb-2">
+                      {selectedVisitor.cards.map((c, idx) => {
+                        const cNo = c.CARD_NO || c.card_no;
+                        const cType = c.CARD_TYPE || c.card_type;
+                        const cAttId = c.CARD_ATTACHMENT_ID || c.card_attachment_id;
+                        return (
+                          <div key={cNo || idx} className="flex items-center justify-between px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 bg-slate-900 border border-slate-700 text-emerald-400 rounded text-[10px] font-mono font-bold">
+                                {cType}
+                              </span>
+                              <span className="font-mono text-white font-semibold">{cNo}</span>
+                              {cAttId && (
+                                <span className="text-[10px] text-slate-500 border border-slate-800 bg-slate-900 px-1.5 py-0.5 rounded">
+                                  Image Attached
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCard(cNo)}
+                              className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
+                              title="Delete Card"
+                            >
+                              <Trash size={14} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 mb-2">No cards registered yet.</p>
+                  )}
+
+                  {/* Additional Cards Input Rows in Edit Modal */}
+                  {editForm.additionalCards && editForm.additionalCards.length > 0 && (
+                    <div className="space-y-2 pt-1 border-t border-slate-800/60 mt-2">
+                      <label className={labelClass}>New Cards to Add & Image Upload</label>
+                      {editForm.additionalCards.map((extra, idx) => (
+                        <div key={idx} className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-2">
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={extra.cardType}
+                              onChange={(e) => {
+                                const updated = [...editForm.additionalCards];
+                                updated[idx].cardType = e.target.value;
+                                setEditForm({ ...editForm, additionalCards: updated });
+                              }}
+                              className="w-28 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-200"
+                            >
+                              <option value="KTP">KTP</option>
+                              <option value="SIM">SIM</option>
+                              <option value="PASSPORT">PASSPORT</option>
+                              <option value="RFID">RFID</option>
+                            </select>
+                            <input
+                              type="text"
+                              placeholder="Enter new card number..."
+                              value={extra.cardNo}
+                              onChange={(e) => {
+                                const updated = [...editForm.additionalCards];
+                                updated[idx].cardNo = e.target.value;
+                                setEditForm({ ...editForm, additionalCards: updated });
+                              }}
+                              className={inputClass}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = editForm.additionalCards.filter((_, i) => i !== idx);
+                                setEditForm({ ...editForm, additionalCards: updated });
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-rose-500/10"
+                              title="Remove Card"
+                            >
+                              <Trash size={14} />
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2 pt-1">
+                            <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 text-[11px] px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-colors">
+                              {extraCardUploadingIdx === idx ? (
+                                <>
+                                  <CircleNotch size={13} className="animate-spin text-emerald-400" />
+                                  <span className="text-emerald-400 font-semibold">Scanning & Uploading...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Upload size={13} />
+                                  <span>Upload Card Image</span>
+                                </>
+                              )}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                disabled={extraCardUploadingIdx === idx}
+                                onChange={(e) => handleEditCardImageUpload(idx, e.target.files[0])}
+                                className="hidden"
+                              />
+                            </label>
+                            {extra.previewUrl && (
+                              <div className="w-10 h-6 rounded border border-slate-700 overflow-hidden shrink-0">
+                                <img src={extra.previewUrl} alt="Card Preview" className="w-full h-full object-cover" />
+                              </div>
+                            )}
+                            {extra.cardAttachmentId && !extra.previewUrl && (
+                              <span className="text-[10px] text-emerald-400 font-semibold">Image Attached</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className={labelClass}>Address</label>
+                  <input
+                    type="text"
+                    value={editForm.address}
+                    onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                    className={inputClass}
+                  />
                 </div>
               </div>
 
-              <div>
-                <label className={labelClass}>Card No. / ID Number</label>
-                <input
-                  type="text"
-                  value={editForm.cardNo}
-                  onChange={(e) => setEditForm({ ...editForm, cardNo: e.target.value })}
-                  className={inputClass}
-                />
-              </div>
-
-              <div>
-                <label className={labelClass}>Address</label>
-                <input
-                  type="text"
-                  value={editForm.address}
-                  onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
-                  className={inputClass}
-                />
-              </div>
-
-              <div className="pt-3 flex justify-end gap-2">
+              {/* Modal Footer */}
+              <div className="p-4 border-t border-slate-800 flex items-center justify-end gap-2 shrink-0 bg-slate-900">
                 <button
                   type="button"
                   onClick={() => setShowEditModal(false)}
@@ -1031,7 +1410,7 @@ export default function VisitorsPage() {
                 <button
                   type="submit"
                   disabled={submitLoading}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-4 py-2 rounded-xl shadow-lg shadow-emerald-500/20"
+                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-5 py-2 rounded-xl shadow-lg shadow-emerald-500/20 disabled:opacity-50"
                 >
                   {submitLoading ? 'Saving...' : 'Update Visitor'}
                 </button>

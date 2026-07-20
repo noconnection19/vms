@@ -145,19 +145,42 @@ router.post('/register', async (req, res) => {
   try {
     const {
       phoneNo, userType = 'REGULAR', name, gender, placeOfBirth, birthday, address, photoAttachmentId,
-      cardNo, cardType = 'KTP', cardAttachmentId
+      cardNo, cardType = 'KTP', cardAttachmentId,
+      cards = []
     } = req.body;
 
-    if (!phoneNo || !cardNo) {
-      return res.status(400).json({ message: 'Phone number and card number are required.' });
+    if (!phoneNo) {
+      return res.status(400).json({ message: 'Phone number is required.' });
     }
 
-    // 1. Check if cardNo (NIK) belongs to ANOTHER phone number (Prevent card stealing)
-    const existingCard = await db.get('SELECT * FROM MASTER_CARD WHERE CARD_NO = ?', [cardNo]);
-    if (existingCard && (existingCard.PHONE_NO || existingCard.phone_no) !== phoneNo) {
-      return res.status(400).json({
-        message: `Card / ID number ${cardNo} is already registered for another visitor (${existingCard.NAME || existingCard.name} - ${existingCard.PHONE_NO || existingCard.phone_no}).`
-      });
+    // Prepare unified cards list to process
+    let cardsToProcess = [];
+    if (Array.isArray(cards) && cards.length > 0) {
+      cardsToProcess = cards.filter(c => c && (c.cardNo || c.CARD_NO));
+    } else if (cardNo) {
+      cardsToProcess = [{ cardNo, cardType, cardAttachmentId }];
+    }
+
+    if (cardsToProcess.length === 0) {
+      return res.status(400).json({ message: 'At least one card number is required.' });
+    }
+
+    // 1. Check if any cardNo belongs to ANOTHER visitor (Prevent card stealing)
+    for (const item of cardsToProcess) {
+      const cNo = item.cardNo || item.CARD_NO;
+      const existingCard = await db.get(`
+        SELECT c.*, u.NAME as user_name 
+        FROM MASTER_CARD c 
+        LEFT JOIN MASTER_USER u ON c.PHONE_NO = u.PHONE_NO 
+        WHERE c.CARD_NO = ?
+      `, [cNo]);
+
+      if (existingCard && (existingCard.PHONE_NO || existingCard.phone_no) !== phoneNo) {
+        const ownerName = existingCard.user_name || existingCard.USER_NAME || existingCard.NAME || existingCard.name;
+        return res.status(400).json({
+          message: `Card / ID number ${cNo} is already registered for another visitor (${ownerName} - ${existingCard.PHONE_NO || existingCard.phone_no}).`
+        });
+      }
     }
 
     const validTo = new Date();
@@ -178,26 +201,40 @@ router.post('/register', async (req, res) => {
       `, [name, gender, placeOfBirth, birthday || null, address, photoAttachmentId || existingUser.PHOTO_ATTACHMENT_ID || existingUser.photo_attachment_id || null, phoneNo]);
     }
 
-    // 3. Insert or Update Master Card (1-to-1 enforcement)
-    if (!existingCard) {
-      // Remove old card associated with this phoneNo if updating cardNo
-      await db.run('DELETE FROM MASTER_CARD WHERE PHONE_NO = ?', [phoneNo]);
-      await db.run(`
-        INSERT INTO MASTER_CARD (CARD_NO, PHONE_NO, NAME, CARD_TYPE, CARD_ATTACHMENT_ID)
-        VALUES (?, ?, ?, ?, ?)
-      `, [cardNo, phoneNo, name, cardType, cardAttachmentId || null]);
-    } else {
+    // Sync visitor name across all cards for this user
+    if (name) {
       await db.run(`
         UPDATE MASTER_CARD
-        SET NAME = ?, CARD_TYPE = ?, CARD_ATTACHMENT_ID = ?, CHANGED_DT = CURRENT_TIMESTAMP
-        WHERE CARD_NO = ? AND PHONE_NO = ?
-      `, [name, cardType, cardAttachmentId || existingCard.CARD_ATTACHMENT_ID || existingCard.card_attachment_id || null, cardNo, phoneNo]);
+        SET NAME = ?, CHANGED_DT = CURRENT_TIMESTAMP
+        WHERE PHONE_NO = ?
+      `, [name, phoneNo]);
+    }
+
+    // 3. Process all cards in cardsToProcess
+    for (const item of cardsToProcess) {
+      const cNo = item.cardNo || item.CARD_NO;
+      const cType = item.cardType || item.CARD_TYPE || 'KTP';
+      const cAttId = item.cardAttachmentId || item.CARD_ATTACHMENT_ID || null;
+
+      const existingCard = await db.get('SELECT * FROM MASTER_CARD WHERE CARD_NO = ?', [cNo]);
+      if (!existingCard) {
+        await db.run(`
+          INSERT INTO MASTER_CARD (CARD_NO, PHONE_NO, NAME, CARD_TYPE, CARD_ATTACHMENT_ID)
+          VALUES (?, ?, ?, ?, ?)
+        `, [cNo, phoneNo, name, cType, cAttId]);
+      } else {
+        await db.run(`
+          UPDATE MASTER_CARD
+          SET NAME = ?, CARD_TYPE = ?, CARD_ATTACHMENT_ID = COALESCE(?, CARD_ATTACHMENT_ID), CHANGED_DT = CURRENT_TIMESTAMP
+          WHERE CARD_NO = ? AND PHONE_NO = ?
+        `, [name, cType, cAttId, cNo, phoneNo]);
+      }
     }
 
     return res.json({
-      message: 'Visitor registration submitted successfully.',
+      message: `Visitor registration submitted successfully with ${cardsToProcess.length} card(s).`,
       phoneNo: phoneNo,
-      cardNo: cardNo
+      cardCount: cardsToProcess.length
     });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -280,28 +317,78 @@ router.put('/update/:phoneNo', async (req, res) => {
       WHERE PHONE_NO = ?
     `, [name, gender, placeOfBirth, birthday || null, address, userType, phoneNo]);
 
+    if (name) {
+      await db.run(`
+        UPDATE MASTER_CARD
+        SET NAME = ?, CHANGED_DT = CURRENT_TIMESTAMP
+        WHERE PHONE_NO = ?
+      `, [name, phoneNo]);
+    }
+
+    const { cardAttachmentId, additionalCards = [] } = req.body;
+
     if (cardNo) {
       const cardByNo = await db.get('SELECT * FROM MASTER_CARD WHERE CARD_NO = ?', [cardNo]);
       if (cardByNo && (cardByNo.PHONE_NO || cardByNo.phone_no) !== phoneNo) {
         return res.status(400).json({ message: `Card / ID number ${cardNo} is already registered for another visitor (${cardByNo.PHONE_NO || cardByNo.phone_no}).` });
       }
 
-      const existingCard = await db.get('SELECT * FROM MASTER_CARD WHERE PHONE_NO = ?', [phoneNo]);
-      if (existingCard) {
+      if (cardByNo) {
         await db.run(`
           UPDATE MASTER_CARD
-          SET CARD_NO = ?, NAME = ?, CARD_TYPE = ?, CHANGED_DT = CURRENT_TIMESTAMP
-          WHERE PHONE_NO = ?
-        `, [cardNo, name, cardType, phoneNo]);
+          SET NAME = ?, CARD_TYPE = ?, CARD_ATTACHMENT_ID = COALESCE(?, CARD_ATTACHMENT_ID), CHANGED_DT = CURRENT_TIMESTAMP
+          WHERE CARD_NO = ? AND PHONE_NO = ?
+        `, [name, cardType, cardAttachmentId || null, cardNo, phoneNo]);
       } else {
         await db.run(`
-          INSERT INTO MASTER_CARD (CARD_NO, PHONE_NO, NAME, CARD_TYPE)
-          VALUES (?, ?, ?, ?)
-        `, [cardNo, phoneNo, name, cardType]);
+          INSERT INTO MASTER_CARD (CARD_NO, PHONE_NO, NAME, CARD_TYPE, CARD_ATTACHMENT_ID)
+          VALUES (?, ?, ?, ?, ?)
+        `, [cardNo, phoneNo, name, cardType, cardAttachmentId || null]);
+      }
+    }
+
+    if (Array.isArray(additionalCards) && additionalCards.length > 0) {
+      for (const extra of additionalCards) {
+        if (extra.cardNo) {
+          const cardByNo = await db.get('SELECT * FROM MASTER_CARD WHERE CARD_NO = ?', [extra.cardNo]);
+          if (cardByNo && (cardByNo.PHONE_NO || cardByNo.phone_no) !== phoneNo) {
+            continue;
+          }
+          if (cardByNo) {
+            await db.run(`
+              UPDATE MASTER_CARD
+              SET NAME = ?, CARD_TYPE = ?, CARD_ATTACHMENT_ID = COALESCE(?, CARD_ATTACHMENT_ID), CHANGED_DT = CURRENT_TIMESTAMP
+              WHERE CARD_NO = ? AND PHONE_NO = ?
+            `, [name, extra.cardType || 'SIM', extra.cardAttachmentId || null, extra.cardNo, phoneNo]);
+          } else {
+            await db.run(`
+              INSERT INTO MASTER_CARD (CARD_NO, PHONE_NO, NAME, CARD_TYPE, CARD_ATTACHMENT_ID)
+              VALUES (?, ?, ?, ?, ?)
+            `, [extra.cardNo, phoneNo, name, extra.cardType || 'SIM', extra.cardAttachmentId || null]);
+          }
+        }
       }
     }
 
     return res.json({ message: 'Visitor data updated successfully.' });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// DELETE /api/v1/visitor/card/:cardNo
+router.delete('/card/:cardNo', async (req, res) => {
+  try {
+    const { cardNo } = req.params;
+    const existingCard = await db.get('SELECT * FROM MASTER_CARD WHERE CARD_NO = ?', [cardNo]);
+    if (!existingCard) {
+      return res.status(404).json({ message: 'Card not found.' });
+    }
+
+    await db.run('DELETE FROM TRANSACTION_VISIT WHERE CARD_NO = ?', [cardNo]);
+    await db.run('DELETE FROM MASTER_CARD WHERE CARD_NO = ?', [cardNo]);
+
+    return res.json({ message: `Card ${cardNo} deleted successfully.` });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }

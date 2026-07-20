@@ -10,10 +10,24 @@ import {
   Upload,
   ArrowLeft,
   ArrowRight,
+  CircleNotch,
 } from '@phosphor-icons/react';
 
 const STEPS = ['Phone Check', 'Card Type', 'OCR Scan', 'Face Photo', 'Completed'];
 import { API_BASE_URL as API_BASE } from '../config';
+
+const parseOcrDate = (dateStr) => {
+  if (!dateStr) return '';
+  const str = String(dateStr).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  const parts = str.split(/[-/.]/);
+  if (parts.length === 3) {
+    const [d, m, y] = parts;
+    if (d.length === 4) return `${d}-${m.padStart(2, '0')}-${y.padStart(2, '0')}`;
+    if (y.length === 4) return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  return str;
+};
 
 export default function KioskRegisterPage({ onGoToAdmin }) {
   const navigate = useNavigate();
@@ -22,6 +36,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
   const [loading, setLoading] = useState(false);
 
   const [isReturning, setIsReturning] = useState(false);
+  const [userCards, setUserCards] = useState([]);
   const [form, setForm] = useState({
     phoneNo: '',
     userType: 'REGULAR',
@@ -30,6 +45,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
     name: '',
     gender: 'L',
     placeOfBirth: '',
+    birthday: '',
     address: '',
     cardAttachmentId: null,
     photoAttachmentId: null,
@@ -50,27 +66,50 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
         body: JSON.stringify({ phoneNo: form.phoneNo }),
       });
       const data = await res.json();
-      // API returns UPPERCASE keys
       if (data.isRegistered && data.data) {
         const d = data.data;
         setIsReturning(true);
+        const cardsList = d.cards || [];
+        setUserCards(cardsList);
+
+        const firstCard = cardsList[0];
+        const cardAttId = firstCard?.CARD_ATTACHMENT_ID || firstCard?.card_attachment_id || null;
+        const photoAttId = d.PHOTO_ATTACHMENT_ID || d.photo_attachment_id || null;
+
         setForm((prev) => ({
           ...prev,
-          name: d.NAME || '',
-          gender: d.GENDER || 'L',
-          placeOfBirth: d.PLACE_OF_BIRTH || '',
-          address: d.ADDRESS || '',
-          cardNo: d.cards?.[0]?.CARD_NO || prev.cardNo,
-          cardType: d.cards?.[0]?.CARD_TYPE || prev.cardType,
+          name: d.NAME || d.name || '',
+          gender: d.GENDER || d.gender || 'L',
+          placeOfBirth: d.PLACE_OF_BIRTH || d.place_of_birth || '',
+          birthday: parseOcrDate(d.BIRTHDAY || d.birthday || ''),
+          address: d.ADDRESS || d.address || '',
+          cardNo: firstCard?.CARD_NO || firstCard?.card_no || prev.cardNo,
+          cardType: firstCard?.CARD_TYPE || firstCard?.card_type || prev.cardType,
+          photoAttachmentId: photoAttId,
+          cardAttachmentId: cardAttId,
         }));
-        setOcrDone(true); // data sudah ada, form OCR langsung terbuka terisi
-        setStep(3);       // skip pilih kartu
+
+        if (cardAttId) {
+          setCardPreviewUrl(`${API_BASE}/visitor/attachment/${cardAttId}`);
+        } else {
+          setCardPreviewUrl(null);
+        }
+        if (photoAttId) {
+          setFacePreviewUrl(`${API_BASE}/visitor/attachment/${photoAttId}`);
+        } else {
+          setFacePreviewUrl(null);
+        }
+
+        setOcrDone(true);
+        setStep(3); // Loncat langsung ke Stage 3 (OCR Scan / Data Verification)
       } else {
         setIsReturning(false);
+        setUserCards([]);
         setStep(2);
       }
     } catch {
       setIsReturning(false);
+      setUserCards([]);
       setStep(2);
     } finally {
       setLoading(false);
@@ -99,6 +138,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
           name: ocr.name || prev.name,
           gender: ocr.gender || prev.gender,
           placeOfBirth: ocr.place_of_birth || prev.placeOfBirth,
+          birthday: parseOcrDate(ocr.birthday) || prev.birthday,
           address: ocr.address || prev.address,
         }));
         setOcrDone(true);
@@ -164,6 +204,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
   const resetForm = () => {
     setStep(1);
     setIsReturning(false);
+    setUserCards([]);
     setForm({ phoneNo: '', cardType: 'KTP', cardNo: '', name: '', gender: 'L', placeOfBirth: '', address: '', cardAttachmentId: null, photoAttachmentId: null });
     setOcrDone(false);
     setCardPreviewUrl(null);
@@ -288,7 +329,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
               </button>
             ))}
           </div>
-          <button onClick={() => setStep(1)} className="w-full flex items-center justify-center gap-1.5 text-slate-400 hover:text-slate-200 text-xs font-medium transition-colors">
+          <button onClick={resetForm} className="w-full flex items-center justify-center gap-1.5 text-slate-400 hover:text-slate-200 text-xs font-medium transition-colors">
             <ArrowLeft size={13} /> Back
           </button>
         </div>
@@ -297,13 +338,71 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
       {/* Step 3: OCR Scan */}
       {step === 3 && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
+          {isReturning && (
+            <div className="flex items-center justify-between p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+              <div className="flex items-center gap-3">
+                <CheckCircle size={22} weight="duotone" className="text-emerald-400 shrink-0" />
+                <div>
+                  <div className="text-xs font-bold text-emerald-300">Welcome Back, {form.name}!</div>
+                  <div className="text-[11px] text-emerald-400/80">Registered visitor data loaded. Verify details or scan a new card below.</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-base font-semibold text-white">Scan {form.cardType} Card</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Upload card photo for OCR processing.</p>
+              <p className="text-xs text-slate-400 mt-0.5">Upload card photo for OCR processing or verify details.</p>
             </div>
             <span className="px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md text-xs font-medium">{form.cardType}</span>
           </div>
+
+          {userCards.length > 0 && (
+            <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className={labelClass}>Registered Access Cards</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForm((prev) => ({ ...prev, cardNo: '', cardType: 'KTP', cardAttachmentId: null }));
+                    setCardPreviewUrl(null);
+                  }}
+                  className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition-colors"
+                >
+                  + Add New Card
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {userCards.map((c, idx) => {
+                  const cNo = c.CARD_NO || c.card_no;
+                  const cType = c.CARD_TYPE || c.card_type;
+                  const isSelected = form.cardNo === cNo;
+                  return (
+                    <button
+                      key={cNo || idx}
+                      type="button"
+                      onClick={() => {
+                        setForm((prev) => ({ ...prev, cardNo: cNo, cardType: cType }));
+                        const attId = c.CARD_ATTACHMENT_ID || c.card_attachment_id;
+                        if (attId) {
+                          setCardPreviewUrl(`${API_BASE}/visitor/attachment/${attId}`);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${
+                        isSelected
+                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="px-1.5 py-0.5 bg-slate-950 rounded text-[10px] font-bold text-emerald-400">{cType}</span>
+                      <span>{cNo}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Upload Box + Preview */}
           {cardPreviewUrl ? (
@@ -317,12 +416,13 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
                 htmlFor="cardInput"
                 className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer transition-colors backdrop-blur-sm"
               >
-                <Barcode size={13} /> Change File
+                <Barcode size={13} /> Change / Scan New Card
               </label>
               <input type="file" onChange={onCardFileSelected} accept="image/*" className="hidden" id="cardInput" />
               {loading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70">
-                  <span className="text-xs text-slate-300 font-medium">Processing OCR...</span>
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-xs gap-2">
+                  <CircleNotch size={24} className="animate-spin text-emerald-400" />
+                  <span className="text-xs text-emerald-300 font-semibold">Processing & Scanning OCR...</span>
                 </div>
               )}
             </div>
@@ -331,10 +431,10 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
               <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center mx-auto mb-3">
                 <Upload size={18} className="text-emerald-400" />
               </div>
-              <p className="text-xs text-slate-400 mb-3">Select identity card image file</p>
+              <p className="text-xs text-slate-400 mb-3">Scan new identity card image file</p>
               <input type="file" onChange={onCardFileSelected} accept="image/*" className="hidden" id="cardInput" />
               <label htmlFor="cardInput" className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
-                <Barcode size={14} /> Choose File
+                <Barcode size={14} /> Scan New Card
               </label>
             </div>
           )}
@@ -342,13 +442,31 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
           {/* OCR Result Form */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-400">OCR Result</span>
+              <span className="text-xs font-medium text-slate-400">Card & Visitor Details</span>
               {ocrDone && <span className="text-xs text-emerald-400 font-medium">Extracted successfully</span>}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className={labelClass}>Card No. / ID Number</label>
-                <input type="text" value={form.cardNo} onChange={(e) => setForm({ ...form, cardNo: e.target.value })} className={inputClass} />
+                <label className={labelClass}>Card Type & ID Number</label>
+                <div className="flex gap-2">
+                  <select
+                    value={form.cardType}
+                    onChange={(e) => setForm({ ...form, cardType: e.target.value })}
+                    className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2.5 text-xs text-slate-200 outline-none focus:border-emerald-500"
+                  >
+                    <option value="KTP">KTP</option>
+                    <option value="SIM">SIM</option>
+                    <option value="PASSPORT">PASSPORT</option>
+                    <option value="RFID">RFID</option>
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Enter card number..."
+                    value={form.cardNo}
+                    onChange={(e) => setForm({ ...form, cardNo: e.target.value })}
+                    className={inputClass}
+                  />
+                </div>
               </div>
               <div>
                 <label className={labelClass}>Full Name</label>
@@ -365,6 +483,10 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
                 <label className={labelClass}>Place of Birth</label>
                 <input type="text" value={form.placeOfBirth} onChange={(e) => setForm({ ...form, placeOfBirth: e.target.value })} className={inputClass} />
               </div>
+              <div>
+                <label className={labelClass}>Date of Birth</label>
+                <input type="date" value={form.birthday} onChange={(e) => setForm({ ...form, birthday: e.target.value })} className={inputClass} />
+              </div>
               <div className="md:col-span-2">
                 <label className={labelClass}>Address</label>
                 <input type="text" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className={inputClass} />
@@ -373,7 +495,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
           </div>
 
           <div className="flex items-center justify-between pt-2">
-            <button onClick={() => setStep(isReturning ? 1 : 2)} className="flex items-center gap-1.5 text-slate-400 hover:text-slate-200 text-xs font-medium transition-colors">
+            <button onClick={resetForm} className="flex items-center gap-1.5 text-slate-400 hover:text-slate-200 text-xs font-medium transition-colors">
               <ArrowLeft size={13} /> Back
             </button>
             <button
@@ -411,8 +533,9 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
               </label>
               <input type="file" onChange={onFaceFileSelected} accept="image/*" className="hidden" id="faceInput" />
               {loading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70">
-                  <span className="text-xs text-slate-300 font-medium">Analyzing face...</span>
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-xs gap-2">
+                  <CircleNotch size={24} className="animate-spin text-emerald-400" />
+                  <span className="text-xs text-emerald-300 font-semibold">Analyzing Face Quality...</span>
                 </div>
               )}
             </div>
