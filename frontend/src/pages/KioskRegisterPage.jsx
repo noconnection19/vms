@@ -24,6 +24,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
   const [isReturning, setIsReturning] = useState(false);
   const [form, setForm] = useState({
     phoneNo: '',
+    userType: 'REGULAR',
     cardType: 'KTP',
     cardNo: '',
     name: '',

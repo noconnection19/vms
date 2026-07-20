@@ -96,13 +96,18 @@ class FaceQualityResponse(BaseModel):
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-def _get_easyocr_reader() -> "easyocr.Reader":
-    """Lazy-init EasyOCR reader (downloads model on first call, ~100MB)."""
-    global _easyocr_reader
-    if _easyocr_reader is None:
-        print("[OCR] Initializing EasyOCR reader (may download model on first run)...")
-        _easyocr_reader = easyocr.Reader(["id", "en"], gpu=False)
-        print("[OCR] EasyOCR reader ready.")
+def _get_easyocr_reader() -> Optional["easyocr.Reader"]:
+    """Lazy-init EasyOCR reader with fallback on error/OOM."""
+    global _easyocr_reader, HAS_EASYOCR
+    if _easyocr_reader is None and HAS_EASYOCR:
+        try:
+            print("[OCR] Initializing EasyOCR reader (may download model on first run)...")
+            _easyocr_reader = easyocr.Reader(["id", "en"], gpu=False)
+            print("[OCR] EasyOCR reader ready.")
+        except Exception as e:
+            print(f"[OCR Warning] EasyOCR init failed (falling back to Tesseract): {e}")
+            HAS_EASYOCR = False
+            _easyocr_reader = None
     return _easyocr_reader
 
 
@@ -141,16 +146,23 @@ def preprocess_ktp(img_bgr: np.ndarray) -> np.ndarray:
 def ocr_crop(crop_bgr: np.ndarray, use_easyocr: bool = True) -> str:
     """Run OCR on a cropped field image."""
     if use_easyocr and HAS_EASYOCR:
-        reader = _get_easyocr_reader()
-        results = reader.readtext(crop_bgr, workers=0)
-        return " ".join(r[1] for r in results)
+        try:
+            reader = _get_easyocr_reader()
+            if reader is not None:
+                results = reader.readtext(crop_bgr, workers=0)
+                return " ".join(r[1] for r in results)
+        except Exception as e:
+            print(f"[OCR Warning] EasyOCR readtext failed: {e}")
 
     # Fallback: Tesseract
     if HAS_TESSERACT:
-        upscaled = cv2.resize(crop_bgr, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        gray = cv2.cvtColor(upscaled, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return pytesseract.image_to_string(thresh, lang="ind", config="--oem 3 --psm 6")
+        try:
+            upscaled = cv2.resize(crop_bgr, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            gray = cv2.cvtColor(upscaled, cv2.COLOR_BGR2GRAY)
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            return pytesseract.image_to_string(thresh, lang="ind", config="--oem 3 --psm 6")
+        except Exception as e:
+            print(f"[OCR Warning] Tesseract read failed: {e}")
 
     return ""
 

@@ -144,7 +144,7 @@ router.post('/upload-photo', upload.single('file'), async (req, res) => {
 router.post('/register', async (req, res) => {
   try {
     const {
-      phoneNo, userType = 'V', name, gender, placeOfBirth, birthday, address, photoAttachmentId,
+      phoneNo, userType = 'REGULAR', name, gender, placeOfBirth, birthday, address, photoAttachmentId,
       cardNo, cardType = 'KTP', cardAttachmentId
     } = req.body;
 
@@ -267,7 +267,7 @@ router.get('/detail/:phoneNo', async (req, res) => {
 router.put('/update/:phoneNo', async (req, res) => {
   try {
     const { phoneNo } = req.params;
-    const { name, gender, placeOfBirth, birthday, address, userType = 'V', cardNo, cardType = 'KTP' } = req.body;
+    const { name, gender, placeOfBirth, birthday, address, userType = 'REGULAR', cardNo, cardType = 'KTP' } = req.body;
 
     const existingUser = await db.get('SELECT * FROM MASTER_USER WHERE PHONE_NO = ?', [phoneNo]);
     if (!existingUser) {
@@ -330,7 +330,7 @@ router.delete('/delete/:phoneNo', async (req, res) => {
 // POST /api/v1/visitor/register-group
 router.post('/register-group', async (req, res) => {
   try {
-    const { sponsorName, sponsorPhone, userType = 'V', members = [] } = req.body;
+    const { sponsorName, sponsorPhone, userType = 'REGULAR', members = [] } = req.body;
 
     if (!sponsorPhone || !members.length) {
       return res.status(400).json({ message: 'Group sponsor and members list are required.' });
