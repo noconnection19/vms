@@ -4,6 +4,10 @@ const { Pool, types } = require('pg');
 // Parse PostgreSQL DATE type (OID 1082) directly as string 'YYYY-MM-DD' without converting to JS Date/UTC
 types.setTypeParser(1082, (val) => val);
 
+// Parse PostgreSQL TIMESTAMP WITHOUT TIMEZONE (OID 1114) as raw string.
+// Without this, pg interprets stored UTC values as local time, causing incorrect timezone shifts.
+types.setTypeParser(1114, (val) => val);
+
 const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:OtQnMrOtrFKxyhRWKoIyxDqwWonzCkmi@tramway.proxy.rlwy.net:27034/railway';
 
 const pool = new Pool({
