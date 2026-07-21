@@ -1,22 +1,11 @@
 import React, { useState } from 'react';
-
-const formatTime = (val) => {
-  if (!val) return '—';
-  // DB may return timestamps without timezone suffix (e.g. "2026-07-21 04:36:11").
-  // Browser interprets those as local time instead of UTC — append Z to force UTC,
-  // then toLocaleTimeString() correctly converts to the user's local timezone.
-  const str = String(val);
-  const utcStr = /[Zz]|[+-]\d{2}:\d{2}$/.test(str)
-    ? str
-    : str.replace(' ', 'T') + 'Z';
-  const d = new Date(utcStr);
-  return isNaN(d.getTime()) ? val : d.toLocaleTimeString();
-};
+import { formatTime } from '../utils/datetime';
 
 const getField = (obj, ...keys) => {
   for (const k of keys) if (obj?.[k] != null) return obj[k];
   return null;
 };
+
 import {
   SignIn,
   SignOut,

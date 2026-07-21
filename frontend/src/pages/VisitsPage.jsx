@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowClockwise } from '@phosphor-icons/react';
 import { API_BASE_URL } from '../config';
+import { formatDateTime } from '../utils/datetime';
 
 export default function VisitsPage() {
   const [visits, setVisits] = useState([]);
@@ -56,9 +57,9 @@ export default function VisitsPage() {
                   <td className="px-4 py-3 font-mono text-slate-500">{v.visitId?.substring(0, 8)}...</td>
                   <td className="px-4 py-3 font-mono font-medium text-slate-200">{v.cardNo}</td>
                   <td className="px-4 py-3 text-slate-200">{v.card?.name || 'Visitor'}</td>
-                  <td className="px-4 py-3 font-mono text-emerald-400">{new Date(v.checkIn).toLocaleString('en-US')}</td>
+                  <td className="px-4 py-3 font-mono text-emerald-400">{formatDateTime(v.checkIn)}</td>
                   <td className="px-4 py-3 font-mono text-amber-400">
-                    {v.checkOut ? new Date(v.checkOut).toLocaleString('en-US') : <span className="text-slate-600">—</span>}
+                    {v.checkOut ? formatDateTime(v.checkOut) : <span className="text-slate-600">—</span>}
                   </td>
                   <td className="px-4 py-3">
                     {v.checkOut ? (
