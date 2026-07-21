@@ -186,12 +186,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
         return;
       }
 
-      await fetch(`${API_BASE}/gate/check-in`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cardNo: form.cardNo }),
-      });
-      toast.success('Registration & Check-In submitted successfully!', 'Check-In Success');
+      toast.success('Registration submitted successfully!', 'Registration Success');
       setStep(5);
     } catch (err) {
       toast.error('Failed to submit registration: ' + err.message);
@@ -567,25 +562,25 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
               disabled={loading}
               className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold px-5 py-2 rounded-lg transition-colors disabled:opacity-40 text-sm"
             >
-              {loading ? 'Processing...' : 'Submit & Open Gate'}
+              {loading ? 'Processing...' : 'Submit Registration'}
               {!loading && <CheckCircle size={15} weight="bold" />}
             </button>
           </div>
         </div>
       )}
 
-      {/* Step 5: Gate Open */}
+      {/* Step 5: Registration Complete */}
       {step === 5 && (
         <div className="bg-slate-900 border border-emerald-500/40 rounded-xl p-10 max-w-sm mx-auto text-center space-y-5">
           <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/30 rounded-full flex items-center justify-center mx-auto">
             <CheckCircle size={32} weight="duotone" className="text-emerald-400" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-emerald-400">Gate Opened</h2>
-            <p className="text-sm text-slate-400 mt-1">Registration and check-in successful.</p>
+            <h2 className="text-xl font-bold text-emerald-400">Registration Complete</h2>
+            <p className="text-sm text-slate-400 mt-1">Visitor registration successful.</p>
           </div>
           <p className="text-xs text-slate-400">
-            Welcome <strong className="text-white font-medium">{form.name}</strong>. Please proceed through the turnstile gate.
+            Welcome <strong className="text-white font-medium">{form.name}</strong>. Please scan your card at the gate to check in.
           </p>
           <button
             onClick={resetForm}
