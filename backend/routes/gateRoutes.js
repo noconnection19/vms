@@ -192,7 +192,7 @@ router.post('/check-out', async (req, res) => {
 router.get('/visits', async (req, res) => {
   try {
     const visits = await db.all(`
-      SELECT v.*, COALESCE(u.NAME, c.NAME) as card_name, c.CARD_TYPE as card_type
+      SELECT v.*, COALESCE(u.NAME, c.NAME) as card_name, c.CARD_TYPE as card_type, COALESCE(u.USER_TYPE, 'VISITOR') as user_type
       FROM TRANSACTION_VISIT v
       LEFT JOIN MASTER_CARD c ON v.CARD_NO = c.CARD_NO
       LEFT JOIN MASTER_USER u ON c.PHONE_NO = u.PHONE_NO
@@ -205,6 +205,7 @@ router.get('/visits', async (req, res) => {
       v.cardNo = v.CARD_NO || v.card_no;
       v.checkIn = v.CHECK_IN || v.check_in;
       v.checkOut = v.CHECK_OUT || v.check_out;
+      v.userType = v.USER_TYPE || v.user_type || 'VISITOR';
       v.card = { name: v.card_name || v.CARD_NAME, cardType: v.card_type || v.CARD_TYPE };
     });
 

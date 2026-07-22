@@ -486,7 +486,7 @@ export default function VisitorsPage() {
       {/* Header Action Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm">
         <div>
-          <h2 className="text-base font-bold text-white tracking-tight">Master Directory</h2>
+          <h2 className="text-base font-bold text-white tracking-tight">Master User</h2>
           <p className="text-xs text-slate-400 mt-0.5">Manage registered employees and visitors master database</p>
         </div>
 

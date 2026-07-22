@@ -14,7 +14,7 @@ import {
 const menuItems = [
   { path: '/admin/dashboard', label: 'Dashboard', icon: SquaresFour },
   { path: '/admin/gate', label: 'Gate Control', icon: Lock },
-  { path: '/admin/visitors', label: 'Visitor Directory', icon: Users },
+  { path: '/admin/visitors', label: 'Master User', icon: Users },
   { path: '/admin/visits', label: 'Visit Logs', icon: ClipboardText },
   { path: '/admin/audit', label: 'Audit Log', icon: ShieldCheck },
   { path: '/admin/settings', label: 'Settings', icon: Gear },

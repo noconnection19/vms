@@ -5,7 +5,7 @@ import { Circle, DeviceTablet, SignOut } from '@phosphor-icons/react';
 const routeTitles = {
   '/admin/dashboard': 'Dashboard Overview',
   '/admin/gate': 'Gate Access & Control',
-  '/admin/visitors': 'Visitor Directory Management',
+  '/admin/visitors': 'Master User Management',
   '/admin/visits': 'Visit Logs & History',
   '/admin/audit': 'System Audit Logs',
   '/admin/settings': 'System Settings',
