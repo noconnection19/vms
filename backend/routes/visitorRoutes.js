@@ -53,6 +53,41 @@ router.post('/check-phone', async (req, res) => {
   }
 });
 
+// GET /api/v1/visitor/card-info/:cardNo
+router.get('/card-info/:cardNo', async (req, res) => {
+  try {
+    const { cardNo } = req.params;
+    if (!cardNo) {
+      return res.status(400).json({ message: 'Card number is required.' });
+    }
+
+    let card = await db.get('SELECT * FROM MASTER_CARD WHERE CARD_NO = ?', [cardNo]);
+    let user = null;
+    if (card) {
+      user = await db.get('SELECT * FROM MASTER_USER WHERE PHONE_NO = ?', [card.PHONE_NO || card.phone_no]);
+    } else {
+      user = await db.get('SELECT * FROM MASTER_USER WHERE PHONE_NO = ?', [cardNo]);
+      if (user) {
+        card = await db.get('SELECT * FROM MASTER_CARD WHERE PHONE_NO = ?', [user.PHONE_NO || user.phone_no]);
+      }
+    }
+
+    if (!user && !card) {
+      return res.json({ registered: false, userType: null, name: null });
+    }
+
+    return res.json({
+      registered: true,
+      cardNo: card?.CARD_NO || card?.card_no || cardNo,
+      cardType: card?.CARD_TYPE || card?.card_type || 'KTP',
+      name: user?.NAME || user?.name || card?.NAME || card?.name,
+      userType: user?.USER_TYPE || user?.user_type || 'VISITOR',
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
 // POST /api/v1/visitor/scan-ocr
 router.post('/scan-ocr', upload.single('file'), async (req, res) => {
   try {

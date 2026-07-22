@@ -20,6 +20,7 @@ import {
   CaretUp,
   ArrowClockwise,
   ShieldCheck,
+  Clock,
 } from '@phosphor-icons/react';
 
 import { API_BASE_URL as API_BASE } from '../config';
@@ -68,11 +69,22 @@ export default function GateControlPage() {
       const data = await res.json();
       if (data.ocrResult) {
         const ocr = data.ocrResult;
-        setCheckInScanData(ocr);
         if (ocr.card_no) {
           setCheckInCardNo(ocr.card_no);
           toast.success(`Card detected: ${ocr.card_no}`, 'Card Detected');
+          try {
+            const infoRes = await fetch(`${API_BASE}/visitor/card-info/${ocr.card_no}`);
+            const infoData = await infoRes.json();
+            setCheckInScanData({
+              ...ocr,
+              name: infoData.name || ocr.name,
+              userType: infoData.userType || null,
+            });
+          } catch {
+            setCheckInScanData(ocr);
+          }
         } else {
+          setCheckInScanData(ocr);
           toast.warning('Card number not detected. Please enter it manually.', 'Check Card');
           setShowManualIn(true);
         }
@@ -111,11 +123,22 @@ export default function GateControlPage() {
       const data = await res.json();
       if (data.ocrResult) {
         const ocr = data.ocrResult;
-        setCheckOutScanData(ocr);
         if (ocr.card_no) {
           setCheckOutCardNo(ocr.card_no);
           toast.success(`Card detected: ${ocr.card_no}`, 'Card Detected');
+          try {
+            const infoRes = await fetch(`${API_BASE}/visitor/card-info/${ocr.card_no}`);
+            const infoData = await infoRes.json();
+            setCheckOutScanData({
+              ...ocr,
+              name: infoData.name || ocr.name,
+              userType: infoData.userType || null,
+            });
+          } catch {
+            setCheckOutScanData(ocr);
+          }
         } else {
+          setCheckOutScanData(ocr);
           toast.warning('Card number not detected. Please enter it manually.', 'Check Card');
           setShowManualOut(true);
         }
@@ -326,6 +349,20 @@ export default function GateControlPage() {
                     <span className="text-slate-200 font-medium">{checkInScanData.name}</span>
                   </div>
                 )}
+                {checkInScanData.userType && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">User Type</span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        checkInScanData.userType === 'EMPLOYEE'
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-sky-500/10 text-sky-400 border border-sky-500/30'
+                      }`}
+                    >
+                      {checkInScanData.userType}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -383,27 +420,63 @@ export default function GateControlPage() {
           {/* Gate Result */}
           {checkInResult && (
             <div
-              className={`p-4 border rounded-xl space-y-1.5 ${
+              className={`p-4 border rounded-xl space-y-3 ${
                 checkInResult.accessGranted
-                  ? 'bg-emerald-500/10 border-emerald-500/40'
-                  : 'bg-rose-500/10 border-rose-500/40'
+                  ? 'bg-emerald-500/10 border-emerald-500/30'
+                  : 'bg-rose-500/10 border-rose-500/30'
               }`}
             >
-              <div className="flex items-center gap-2 font-bold text-sm">
-                {checkInResult.accessGranted ? (
-                  <CheckCircle size={20} weight="duotone" className="text-emerald-400" />
-                ) : (
-                  <XCircle size={20} weight="duotone" className="text-rose-400" />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-sm">
+                  {checkInResult.accessGranted ? (
+                    <CheckCircle size={22} weight="duotone" className="text-emerald-400" />
+                  ) : (
+                    <XCircle size={22} weight="duotone" className="text-rose-400" />
+                  )}
+                  <span className={checkInResult.accessGranted ? 'text-emerald-300 font-bold' : 'text-rose-300 font-bold'}>
+                    {checkInResult.accessGranted ? 'Gate Opened' : 'Access Denied'}
+                  </span>
+                </div>
+                {checkInResult.userType && (
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wide ${
+                      checkInResult.userType === 'EMPLOYEE'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                    }`}
+                  >
+                    {checkInResult.userType === 'EMPLOYEE' ? '👤 EMPLOYEE' : '🎫 VISITOR'}
+                  </span>
                 )}
-                <span className={checkInResult.accessGranted ? 'text-emerald-300' : 'text-rose-300'}>
-                  {checkInResult.accessGranted ? 'Gate Opened' : 'Access Denied'}
-                </span>
               </div>
-              <p className="text-xs text-slate-300">{checkInResult.message}</p>
-              {checkInResult.visit && (
-                <div className="text-[11px] font-mono pt-1.5 text-slate-400 border-t border-slate-800/60 flex justify-between gap-4">
-                  <span className="truncate">ID: {getField(checkInResult.visit, 'VISIT_ID', 'visit_id', 'visitId') ?? '—'}</span>
-                  <span className="shrink-0">{formatTime(getField(checkInResult.visit, 'CHECK_IN', 'check_in', 'checkIn'))}</span>
+
+              <p className="text-xs text-slate-300 font-medium">{checkInResult.message}</p>
+
+              {(checkInResult.userName || checkInResult.visit) && (
+                <div className="pt-2.5 border-t border-slate-800/60 grid grid-cols-2 gap-2 text-xs">
+                  {checkInResult.userName && (
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-medium">Name</span>
+                      <span className="text-slate-200 font-semibold truncate block">{checkInResult.userName}</span>
+                    </div>
+                  )}
+                  {checkInResult.visit && (
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-medium">Check-In Time</span>
+                      <span className="text-slate-200 font-semibold flex items-center gap-1 mt-0.5">
+                        <Clock size={13} className="text-emerald-400" />
+                        <span>{formatTime(getField(checkInResult.visit, 'CHECK_IN', 'check_in', 'checkIn'))}</span>
+                      </span>
+                    </div>
+                  )}
+                  {checkInResult.visit && getField(checkInResult.visit, 'VISIT_ID', 'visit_id', 'visitId') && (
+                    <div className="col-span-2 pt-1 flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                      <span className="text-slate-400 text-[10px] font-sans">Visit Ref</span>
+                      <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-300 font-bold">
+                        #{String(getField(checkInResult.visit, 'VISIT_ID', 'visit_id', 'visitId')).substring(0, 8).toUpperCase()}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -510,6 +583,20 @@ export default function GateControlPage() {
                     <span className="text-slate-200 font-medium">{checkOutScanData.name}</span>
                   </div>
                 )}
+                {checkOutScanData.userType && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">User Type</span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        checkOutScanData.userType === 'EMPLOYEE'
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-sky-500/10 text-sky-400 border border-sky-500/30'
+                      }`}
+                    >
+                      {checkOutScanData.userType}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -567,27 +654,63 @@ export default function GateControlPage() {
           {/* Gate Result */}
           {checkOutResult && (
             <div
-              className={`p-4 border rounded-xl space-y-1.5 ${
+              className={`p-4 border rounded-xl space-y-3 ${
                 checkOutResult.accessGranted
-                  ? 'bg-emerald-500/10 border-emerald-500/40'
-                  : 'bg-rose-500/10 border-rose-500/40'
+                  ? 'bg-emerald-500/10 border-emerald-500/30'
+                  : 'bg-rose-500/10 border-rose-500/30'
               }`}
             >
-              <div className="flex items-center gap-2 font-bold text-sm">
-                {checkOutResult.accessGranted ? (
-                  <CheckCircle size={20} weight="duotone" className="text-emerald-400" />
-                ) : (
-                  <XCircle size={20} weight="duotone" className="text-rose-400" />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-sm">
+                  {checkOutResult.accessGranted ? (
+                    <CheckCircle size={22} weight="duotone" className="text-emerald-400" />
+                  ) : (
+                    <XCircle size={22} weight="duotone" className="text-rose-400" />
+                  )}
+                  <span className={checkOutResult.accessGranted ? 'text-emerald-300 font-bold' : 'text-rose-300 font-bold'}>
+                    {checkOutResult.accessGranted ? 'Gate Opened' : 'Access Denied'}
+                  </span>
+                </div>
+                {checkOutResult.userType && (
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wide ${
+                      checkOutResult.userType === 'EMPLOYEE'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                    }`}
+                  >
+                    {checkOutResult.userType === 'EMPLOYEE' ? '👤 EMPLOYEE' : '🎫 VISITOR'}
+                  </span>
                 )}
-                <span className={checkOutResult.accessGranted ? 'text-emerald-300' : 'text-rose-300'}>
-                  {checkOutResult.accessGranted ? 'Gate Opened' : 'Access Denied'}
-                </span>
               </div>
-              <p className="text-xs text-slate-300">{checkOutResult.message}</p>
-              {checkOutResult.visit && (
-                <div className="text-[11px] font-mono pt-1.5 text-slate-400 border-t border-slate-800/60 flex justify-between gap-4">
-                  <span className="truncate">ID: {getField(checkOutResult.visit, 'VISIT_ID', 'visit_id', 'visitId') ?? '—'}</span>
-                  <span className="shrink-0">{formatTime(getField(checkOutResult.visit, 'CHECK_OUT', 'check_out', 'checkOut'))}</span>
+
+              <p className="text-xs text-slate-300 font-medium">{checkOutResult.message}</p>
+
+              {(checkOutResult.userName || checkOutResult.visit) && (
+                <div className="pt-2.5 border-t border-slate-800/60 grid grid-cols-2 gap-2 text-xs">
+                  {checkOutResult.userName && (
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-medium">Name</span>
+                      <span className="text-slate-200 font-semibold truncate block">{checkOutResult.userName}</span>
+                    </div>
+                  )}
+                  {checkOutResult.visit && (
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-medium">Check-Out Time</span>
+                      <span className="text-slate-200 font-semibold flex items-center gap-1 mt-0.5">
+                        <Clock size={13} className="text-amber-400" />
+                        <span>{formatTime(getField(checkOutResult.visit, 'CHECK_OUT', 'check_out', 'checkOut'))}</span>
+                      </span>
+                    </div>
+                  )}
+                  {checkOutResult.visit && getField(checkOutResult.visit, 'VISIT_ID', 'visit_id', 'visitId') && (
+                    <div className="col-span-2 pt-1 flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                      <span className="text-slate-400 text-[10px] font-sans">Visit Ref</span>
+                      <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-300 font-bold">
+                        #{String(getField(checkOutResult.visit, 'VISIT_ID', 'visit_id', 'visitId')).substring(0, 8).toUpperCase()}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

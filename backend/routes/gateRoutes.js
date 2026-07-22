@@ -68,11 +68,17 @@ router.post('/check-in', async (req, res) => {
     }
 
     const phoneNo = card.PHONE_NO || card.phone_no;
+    const user = await db.get('SELECT * FROM MASTER_USER WHERE PHONE_NO = ?', [phoneNo]);
+    const userType = user ? (user.USER_TYPE || user.user_type || 'VISITOR') : 'VISITOR';
+    const userName = user ? (user.NAME || user.name) : (card.NAME || card.name);
+
     const mcuCheck = await validateMcuAccess(phoneNo);
     if (!mcuCheck.allowed) {
       return res.status(403).json({
         accessGranted: false,
-        message: mcuCheck.message
+        message: mcuCheck.message,
+        userType: userType,
+        userName: userName,
       });
     }
 
@@ -82,6 +88,8 @@ router.post('/check-in', async (req, res) => {
       return res.json({
         accessGranted: true,
         message: 'Visitor already checked in. Gate Opened.',
+        userType: userType,
+        userName: userName,
         visit: activeVisit
       });
     }
@@ -99,6 +107,8 @@ router.post('/check-in', async (req, res) => {
     return res.json({
       accessGranted: true,
       message: 'Check-In successful. Gate Opened!',
+      userType: userType,
+      userName: userName,
       visit: visit
     });
   } catch (err) {
@@ -130,11 +140,17 @@ router.post('/check-out', async (req, res) => {
     }
 
     const phoneNo = card.PHONE_NO || card.phone_no;
+    const user = await db.get('SELECT * FROM MASTER_USER WHERE PHONE_NO = ?', [phoneNo]);
+    const userType = user ? (user.USER_TYPE || user.user_type || 'VISITOR') : 'VISITOR';
+    const userName = user ? (user.NAME || user.name) : (card.NAME || card.name);
+
     const mcuCheck = await validateMcuAccess(phoneNo);
     if (!mcuCheck.allowed) {
       return res.status(403).json({
         accessGranted: false,
-        message: mcuCheck.message
+        message: mcuCheck.message,
+        userType: userType,
+        userName: userName,
       });
     }
 
@@ -143,7 +159,9 @@ router.post('/check-out', async (req, res) => {
     if (!activeVisit) {
       return res.status(400).json({
         accessGranted: false,
-        message: 'Visitor has not checked in! Please check in at the Entrance Gate first.'
+        message: 'Visitor has not checked in! Please check in at the Entrance Gate first.',
+        userType: userType,
+        userName: userName,
       });
     }
 
@@ -161,6 +179,8 @@ router.post('/check-out', async (req, res) => {
     return res.json({
       accessGranted: true,
       message: 'Check-Out successful. Gate Opened!',
+      userType: userType,
+      userName: userName,
       visit: activeVisit
     });
   } catch (err) {
