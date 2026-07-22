@@ -3,6 +3,47 @@ const router = express.Router();
 const crypto = require('crypto');
 const db = require('../db');
 
+async function validateMcuAccess(phoneNo) {
+  if (!phoneNo) return { allowed: true };
+  const user = await db.get('SELECT * FROM MASTER_USER WHERE PHONE_NO = ?', [phoneNo]);
+  if (!user) return { allowed: true };
+
+  const userType = user.USER_TYPE || user.user_type || 'VISITOR';
+  if (userType !== 'EMPLOYEE') {
+    return { allowed: true };
+  }
+
+  const mcuFrom = user.MCU_VALID_FROM || user.mcu_valid_from;
+  const mcuTo = user.MCU_VALID_TO || user.mcu_valid_to;
+
+  if (!mcuFrom || !mcuTo) {
+    return {
+      allowed: false,
+      message: 'Access Denied: Employee MCU validity period is not set.'
+    };
+  }
+
+  const todayStr = new Date().toISOString().substring(0, 10);
+  const fromStr = String(mcuFrom).substring(0, 10);
+  const toStr = String(mcuTo).substring(0, 10);
+
+  if (todayStr < fromStr) {
+    return {
+      allowed: false,
+      message: `Access Denied: Employee MCU is not yet valid (Valid from: ${fromStr}).`
+    };
+  }
+
+  if (todayStr > toStr) {
+    return {
+      allowed: false,
+      message: `Access Denied: Employee MCU has expired (Valid to: ${toStr}).`
+    };
+  }
+
+  return { allowed: true };
+}
+
 // POST /api/v1/gate/check-in
 router.post('/check-in', async (req, res) => {
   try {
@@ -23,6 +64,15 @@ router.post('/check-in', async (req, res) => {
       return res.status(404).json({
         accessGranted: false,
         message: 'Card / Visitor not registered. Please register first.'
+      });
+    }
+
+    const phoneNo = card.PHONE_NO || card.phone_no;
+    const mcuCheck = await validateMcuAccess(phoneNo);
+    if (!mcuCheck.allowed) {
+      return res.status(403).json({
+        accessGranted: false,
+        message: mcuCheck.message
       });
     }
 
@@ -76,6 +126,15 @@ router.post('/check-out', async (req, res) => {
       return res.status(404).json({
         accessGranted: false,
         message: 'Card / Visitor not registered.'
+      });
+    }
+
+    const phoneNo = card.PHONE_NO || card.phone_no;
+    const mcuCheck = await validateMcuAccess(phoneNo);
+    if (!mcuCheck.allowed) {
+      return res.status(403).json({
+        accessGranted: false,
+        message: mcuCheck.message
       });
     }
 

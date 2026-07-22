@@ -145,6 +145,7 @@ router.post('/register', async (req, res) => {
   try {
     const {
       phoneNo, userType = 'REGULAR', name, gender, placeOfBirth, birthday, address, photoAttachmentId,
+      mcuAttachmentId, mcuValidFrom, mcuValidTo,
       cardNo, cardType = 'KTP', cardAttachmentId,
       cards = []
     } = req.body;
@@ -190,15 +191,15 @@ router.post('/register', async (req, res) => {
     const existingUser = await db.get('SELECT * FROM MASTER_USER WHERE PHONE_NO = ?', [phoneNo]);
     if (!existingUser) {
       await db.run(`
-        INSERT INTO MASTER_USER (PHONE_NO, USER_TYPE, VALID_TO, NAME, GENDER, PLACE_OF_BIRTH, BIRTHDAY, ADDRESS, PHOTO_ATTACHMENT_ID)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [phoneNo, userType, validTo.toISOString(), name, gender, placeOfBirth, birthday || null, address, photoAttachmentId || null]);
+        INSERT INTO MASTER_USER (PHONE_NO, USER_TYPE, VALID_TO, NAME, GENDER, PLACE_OF_BIRTH, BIRTHDAY, ADDRESS, PHOTO_ATTACHMENT_ID, MCU_ATTACHMENT_ID, MCU_VALID_FROM, MCU_VALID_TO)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [phoneNo, userType, validTo.toISOString(), name, gender, placeOfBirth, birthday || null, address, photoAttachmentId || null, mcuAttachmentId || null, mcuValidFrom || null, mcuValidTo || null]);
     } else {
       await db.run(`
         UPDATE MASTER_USER
-        SET NAME = ?, GENDER = ?, PLACE_OF_BIRTH = ?, BIRTHDAY = ?, ADDRESS = ?, PHOTO_ATTACHMENT_ID = ?, CHANGED_DT = CURRENT_TIMESTAMP
+        SET NAME = ?, GENDER = ?, PLACE_OF_BIRTH = ?, BIRTHDAY = ?, ADDRESS = ?, PHOTO_ATTACHMENT_ID = ?, MCU_ATTACHMENT_ID = COALESCE(?, MCU_ATTACHMENT_ID), MCU_VALID_FROM = ?, MCU_VALID_TO = ?, USER_TYPE = ?, CHANGED_DT = CURRENT_TIMESTAMP
         WHERE PHONE_NO = ?
-      `, [name, gender, placeOfBirth, birthday || null, address, photoAttachmentId || existingUser.PHOTO_ATTACHMENT_ID || existingUser.photo_attachment_id || null, phoneNo]);
+      `, [name, gender, placeOfBirth, birthday || null, address, photoAttachmentId || existingUser.PHOTO_ATTACHMENT_ID || existingUser.photo_attachment_id || null, mcuAttachmentId || null, mcuValidFrom || null, mcuValidTo || null, userType, phoneNo]);
     }
 
     // Sync visitor name across all cards for this user
@@ -293,6 +294,9 @@ router.get('/detail/:phoneNo', async (req, res) => {
       createdDt: user.CREATED_DT || user.created_dt,
       photoAttachmentId: photoAttachmentId,
       photoAttachment: photoAttachment,
+      mcuAttachmentId: user.MCU_ATTACHMENT_ID || user.mcu_attachment_id,
+      mcuValidFrom: user.MCU_VALID_FROM || user.mcu_valid_from,
+      mcuValidTo: user.MCU_VALID_TO || user.mcu_valid_to,
       cards: cards
     });
   } catch (err) {
@@ -304,7 +308,7 @@ router.get('/detail/:phoneNo', async (req, res) => {
 router.put('/update/:phoneNo', async (req, res) => {
   try {
     const { phoneNo } = req.params;
-    const { name, gender, placeOfBirth, birthday, address, userType = 'REGULAR', cardNo, cardType = 'KTP' } = req.body;
+    const { name, gender, placeOfBirth, birthday, address, userType = 'EMPLOYEE', mcuAttachmentId, mcuValidFrom, mcuValidTo, cardNo, cardType = 'KTP' } = req.body;
 
     const existingUser = await db.get('SELECT * FROM MASTER_USER WHERE PHONE_NO = ?', [phoneNo]);
     if (!existingUser) {
@@ -313,9 +317,9 @@ router.put('/update/:phoneNo', async (req, res) => {
 
     await db.run(`
       UPDATE MASTER_USER
-      SET NAME = ?, GENDER = ?, PLACE_OF_BIRTH = ?, BIRTHDAY = ?, ADDRESS = ?, USER_TYPE = ?, CHANGED_DT = CURRENT_TIMESTAMP
+      SET NAME = ?, GENDER = ?, PLACE_OF_BIRTH = ?, BIRTHDAY = ?, ADDRESS = ?, USER_TYPE = ?, MCU_ATTACHMENT_ID = COALESCE(?, MCU_ATTACHMENT_ID), MCU_VALID_FROM = ?, MCU_VALID_TO = ?, CHANGED_DT = CURRENT_TIMESTAMP
       WHERE PHONE_NO = ?
-    `, [name, gender, placeOfBirth, birthday || null, address, userType, phoneNo]);
+    `, [name, gender, placeOfBirth, birthday || null, address, userType, mcuAttachmentId || null, mcuValidFrom || null, mcuValidTo || null, phoneNo]);
 
     if (name) {
       await db.run(`

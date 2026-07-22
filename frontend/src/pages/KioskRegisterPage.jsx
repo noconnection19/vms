@@ -13,7 +13,7 @@ import {
   CircleNotch,
 } from '@phosphor-icons/react';
 
-const STEPS = ['Phone Check', 'Card Type', 'OCR Scan', 'Face Photo', 'Completed'];
+const STEPS = ['Phone Check', 'Card Type', 'Card Registration', 'Face Photo', 'Completed'];
 import { API_BASE_URL as API_BASE } from '../config';
 
 const parseOcrDate = (dateStr) => {
@@ -39,7 +39,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
   const [userCards, setUserCards] = useState([]);
   const [form, setForm] = useState({
     phoneNo: '',
-    userType: 'REGULAR',
+    userType: 'VISITOR',
     cardType: 'KTP',
     cardNo: '',
     name: '',
@@ -200,7 +200,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
     setStep(1);
     setIsReturning(false);
     setUserCards([]);
-    setForm({ phoneNo: '', cardType: 'KTP', cardNo: '', name: '', gender: 'L', placeOfBirth: '', address: '', cardAttachmentId: null, photoAttachmentId: null });
+    setForm({ phoneNo: '', userType: 'VISITOR', cardType: 'KTP', cardNo: '', name: '', gender: 'L', placeOfBirth: '', address: '', cardAttachmentId: null, photoAttachmentId: null });
     setOcrDone(false);
     setCardPreviewUrl(null);
     setFacePreviewUrl(null);
@@ -308,10 +308,10 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 space-y-5 max-w-sm mx-auto">
           <div className="text-center space-y-1">
             <h2 className="text-lg font-semibold text-white">Identity Card Type</h2>
-            <p className="text-xs text-slate-400">Select card type to scan with OCR.</p>
+            <p className="text-xs text-slate-400">Select card type.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {['KTP', 'SIM', 'NPWP', 'KTA'].map((type) => (
+            {['KTP', 'Non KTP'].map((type) => (
               <button
                 key={type}
                 onClick={() => { setForm({ ...form, cardType: type }); setStep(3); }}
@@ -330,7 +330,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
         </div>
       )}
 
-      {/* Step 3: OCR Scan */}
+      {/* Step 3: OCR Scan / Identity Details */}
       {step === 3 && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
           {isReturning && (
@@ -347,8 +347,14 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
 
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-base font-semibold text-white">Scan {form.cardType} Card</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Upload card photo for OCR processing or verify details.</p>
+              <h2 className="text-base font-semibold text-white">
+                {form.cardType === 'Non KTP' ? 'Tap Non KTP Card' : `Scan ${form.cardType} Card`}
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {form.cardType === 'Non KTP'
+                  ? 'Tap Non KTP Card for processing details.'
+                  : 'Upload card photo for OCR processing or verify details.'}
+              </p>
             </div>
             <span className="px-2.5 py-1 bg-slate-800 text-slate-300 rounded-md text-xs font-medium">{form.cardType}</span>
           </div>
@@ -384,11 +390,10 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
                           setCardPreviewUrl(`${API_BASE}/visitor/attachment/${attId}`);
                         }
                       }}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${
-                        isSelected
-                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold'
-                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                      }`}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${isSelected
+                        ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
                     >
                       <span className="px-1.5 py-0.5 bg-slate-950 rounded text-[10px] font-bold text-emerald-400">{cType}</span>
                       <span>{cNo}</span>
@@ -400,38 +405,40 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
           )}
 
           {/* Upload Box + Preview */}
-          {cardPreviewUrl ? (
-            <div className="relative rounded-xl overflow-hidden border border-slate-700 bg-slate-950">
-              <img
-                src={cardPreviewUrl}
-                alt="Preview kartu identitas"
-                className="w-full max-h-52 object-contain"
-              />
-              <label
-                htmlFor="cardInput"
-                className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer transition-colors backdrop-blur-sm"
-              >
-                <Barcode size={13} /> Change / Scan New Card
-              </label>
-              <input type="file" onChange={onCardFileSelected} accept="image/*" className="hidden" id="cardInput" />
-              {loading && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-xs gap-2">
-                  <CircleNotch size={24} className="animate-spin text-emerald-400" />
-                  <span className="text-xs text-emerald-300 font-semibold">Processing & Scanning OCR...</span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="border border-dashed border-slate-700 hover:border-emerald-500/50 rounded-xl p-6 text-center bg-slate-950/50 transition-colors">
-              <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center mx-auto mb-3">
-                <Upload size={18} className="text-emerald-400" />
+          {form.cardType !== 'Non KTP' && (
+            cardPreviewUrl ? (
+              <div className="relative rounded-xl overflow-hidden border border-slate-700 bg-slate-950">
+                <img
+                  src={cardPreviewUrl}
+                  alt="Preview kartu identitas"
+                  className="w-full max-h-52 object-contain"
+                />
+                <label
+                  htmlFor="cardInput"
+                  className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer transition-colors backdrop-blur-sm"
+                >
+                  <Barcode size={13} /> Change / Scan New Card
+                </label>
+                <input type="file" onChange={onCardFileSelected} accept="image/*" className="hidden" id="cardInput" />
+                {loading && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-xs gap-2">
+                    <CircleNotch size={24} className="animate-spin text-emerald-400" />
+                    <span className="text-xs text-emerald-300 font-semibold">Processing & Scanning OCR...</span>
+                  </div>
+                )}
               </div>
-              <p className="text-xs text-slate-400 mb-3">Scan new identity card image file</p>
-              <input type="file" onChange={onCardFileSelected} accept="image/*" className="hidden" id="cardInput" />
-              <label htmlFor="cardInput" className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
-                <Barcode size={14} /> Scan New Card
-              </label>
-            </div>
+            ) : (
+              <div className="border border-dashed border-slate-700 hover:border-emerald-500/50 rounded-xl p-6 text-center bg-slate-950/50 transition-colors">
+                <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center mx-auto mb-3">
+                  <Upload size={18} className="text-emerald-400" />
+                </div>
+                <p className="text-xs text-slate-400 mb-3">Scan new identity card image file</p>
+                <input type="file" onChange={onCardFileSelected} accept="image/*" className="hidden" id="cardInput" />
+                <label htmlFor="cardInput" className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
+                  <Barcode size={14} /> Scan New Card
+                </label>
+              </div>
+            )
           )}
 
           {/* OCR Result Form */}
@@ -450,9 +457,7 @@ export default function KioskRegisterPage({ onGoToAdmin }) {
                     className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2.5 text-xs text-slate-200 outline-none focus:border-emerald-500"
                   >
                     <option value="KTP">KTP</option>
-                    <option value="SIM">SIM</option>
-                    <option value="PASSPORT">PASSPORT</option>
-                    <option value="RFID">RFID</option>
+                    <option value="Non KTP">Non KTP</option>
                   </select>
                   <input
                     type="text"
