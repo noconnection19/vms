@@ -692,7 +692,7 @@ async def face_quality_check(image: UploadFile = File(...)):
         if img is None:
             return FaceQualityResponse(
                 is_valid=False, face_detected=False, is_blurred=False,
-                message="File foto tidak dapat dibaca."
+                message="Image file could not be read."
             )
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -707,23 +707,23 @@ async def face_quality_check(image: UploadFile = File(...)):
         if is_blurred:
             return FaceQualityResponse(
                 is_valid=False, face_detected=face_detected, is_blurred=True,
-                message="Foto terlalu blur. Harap ambil ulang foto wajah."
+                message="Photo is too blurry. Please retake face photo."
             )
         if not face_detected:
             return FaceQualityResponse(
                 is_valid=False, face_detected=False, is_blurred=False,
-                message="Wajah tidak terdeteksi. Pastikan wajah menghadap kamera."
+                message="No face detected. Ensure face is directly facing the camera."
             )
         return FaceQualityResponse(
             is_valid=True, face_detected=True, is_blurred=False,
-            message="Foto wajah terdeteksi dengan jelas."
+            message="Face photo detected clearly."
         )
 
     except Exception as e:
         print(f"[Face Quality Error] {e}")
         return FaceQualityResponse(
             is_valid=True, face_detected=True, is_blurred=False,
-            message="Foto wajah diterima."
+            message="Face photo accepted."
         )
     finally:
         if os.path.exists(temp_path):
