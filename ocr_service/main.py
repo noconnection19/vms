@@ -10,7 +10,7 @@ import shutil
 import datetime
 import numpy as np
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Tuple
 from PIL import Image, ImageEnhance, ImageFilter
 from scipy.ndimage import rotate as scipy_rotate
 from fastapi import FastAPI, File, UploadFile, Form
@@ -60,8 +60,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TEMP_DIR = "extract_image"
-MODEL_PATH = os.path.join("models", "best.pt")
+TEMP_DIR = os.path.join(os.path.dirname(__file__), "extract_image")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "best.pt")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Load YOLO once at startup
@@ -111,9 +111,10 @@ def _get_easyocr_reader() -> Optional["easyocr.Reader"]:
     return _easyocr_reader
 
 
-def correct_skew(img_bgr: np.ndarray, delta: int = 1, limit: int = 15) -> np.ndarray:
-    """Deskew image by finding the angle that maximises horizontal projection variance."""
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+def get_deskew_angle(img_bgr: np.ndarray, delta: int = 1, limit: int = 15) -> float:
+    """Find the deskew angle on a smaller resized image for performance."""
+    small = cv2.resize(img_bgr, (320, 240))
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
     best_score, best_angle = -1.0, 0.0
@@ -123,13 +124,22 @@ def correct_skew(img_bgr: np.ndarray, delta: int = 1, limit: int = 15) -> np.nda
         score = float(np.sum((histogram[1:] - histogram[:-1]) ** 2))
         if score > best_score:
             best_score, best_angle = score, angle
+    return float(best_angle)
 
+
+def rotate_image(img_bgr: np.ndarray, angle: float) -> np.ndarray:
+    """Rotate image by given angle."""
     h, w = img_bgr.shape[:2]
-    M = cv2.getRotationMatrix2D((w // 2, h // 2), best_angle, 1.0)
-    corrected = cv2.warpAffine(img_bgr, M, (w, h), flags=cv2.INTER_CUBIC,
-                               borderMode=cv2.BORDER_REPLICATE)
-    print(f"[OCR] Deskew angle: {best_angle}°")
-    return corrected
+    M = cv2.getRotationMatrix2D((w // 2, h // 2), angle, 1.0)
+    return cv2.warpAffine(img_bgr, M, (w, h), flags=cv2.INTER_CUBIC,
+                           borderMode=cv2.BORDER_REPLICATE)
+
+
+def correct_skew(img_bgr: np.ndarray, delta: int = 1, limit: int = 15) -> np.ndarray:
+    """Deskew image by finding the angle that maximises horizontal projection variance."""
+    angle = get_deskew_angle(img_bgr, delta, limit)
+    print(f"[OCR] Deskew angle: {angle}°")
+    return rotate_image(img_bgr, angle)
 
 
 def preprocess_ktp(img_bgr: np.ndarray) -> np.ndarray:
@@ -143,14 +153,48 @@ def preprocess_ktp(img_bgr: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
 
+def enhance_crop(crop_bgr: np.ndarray) -> np.ndarray:
+    """Upscale the crop if it's too small (helping OCR engine recognize strokes)."""
+    if crop_bgr.size == 0:
+        return crop_bgr
+    h, w = crop_bgr.shape[:2]
+    if h < 64:
+        scale = 64.0 / h
+        crop_bgr = cv2.resize(crop_bgr, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    return crop_bgr
+
+
 def ocr_crop(crop_bgr: np.ndarray, use_easyocr: bool = True) -> str:
-    """Run OCR on a cropped field image."""
+    """Run OCR on a cropped field image, selecting the highest confidence representation."""
     if use_easyocr and HAS_EASYOCR:
         try:
             reader = _get_easyocr_reader()
             if reader is not None:
-                results = reader.readtext(crop_bgr, workers=0)
-                return " ".join(r[1] for r in results)
+                # 1. Scale-only version (Unenhanced)
+                h, w = crop_bgr.shape[:2]
+                crop_un = crop_bgr.copy()
+                if h < 64:
+                    scale = 64.0 / h
+                    crop_un = cv2.resize(crop_un, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+                
+                # 2. Enhanced version (Sharpened + Contrast 2.0)
+                pil_enh = Image.fromarray(cv2.cvtColor(crop_un, cv2.COLOR_BGR2RGB))
+                pil_enh = pil_enh.filter(ImageFilter.SHARPEN)
+                pil_enh = ImageEnhance.Contrast(pil_enh).enhance(2.0)
+                crop_enh = cv2.cvtColor(np.array(pil_enh), cv2.COLOR_RGB2BGR)
+                
+                # Run OCR on both
+                res_un = reader.readtext(crop_un, workers=0)
+                res_enh = reader.readtext(crop_enh, workers=0)
+                
+                txt_un = " ".join(r[1] for r in res_un).strip()
+                conf_un = np.mean([r[2] for r in res_un]) if res_un else 0.0
+                
+                txt_enh = " ".join(r[1] for r in res_enh).strip()
+                conf_enh = np.mean([r[2] for r in res_enh]) if res_enh else 0.0
+                
+                # Return the one with higher confidence
+                return txt_enh if conf_enh > conf_un else txt_un
         except Exception as e:
             print(f"[OCR Warning] EasyOCR readtext failed: {e}")
 
@@ -167,38 +211,103 @@ def ocr_crop(crop_bgr: np.ndarray, use_easyocr: bool = True) -> str:
     return ""
 
 
+def parse_date_and_gender_from_nik(nik: str) -> Tuple[Optional[str], Optional[str]]:
+    """Parse date of birth (DD-MM-YYYY) and gender (L/P) from a 16-digit NIK."""
+    if len(nik) != 16 or not nik.isdigit():
+        return None, None
+    try:
+        day_part = int(nik[6:8])
+        month_part = int(nik[8:10])
+        year_part = int(nik[10:12])
+        
+        # Gender and day determination
+        if day_part > 40:
+            gender = "P"
+            day = day_part - 40
+        else:
+            gender = "L"
+            day = day_part
+            
+        if not (1 <= day <= 31) or not (1 <= month_part <= 12):
+            return None, None
+            
+        # Year determination (heuristic: NIK holders are born between 1930 and 2025)
+        current_year = datetime.datetime.now().year
+        current_year_last_two = current_year % 100
+        if year_part <= current_year_last_two:
+            year = 2000 + year_part
+        else:
+            year = 1900 + year_part
+            
+        # Verify it's a valid date
+        birth_date = datetime.datetime(year, month_part, day).strftime("%d-%m-%Y")
+        return birth_date, gender
+    except Exception:
+        return None, None
+
+
+def clean_numeric_text(text: str) -> str:
+    """Replace common OCR letter-to-digit typos in numeric fields."""
+    replacements = {
+        'o': '0', 'O': '0', 'D': '0',
+        'i': '1', 'I': '1', 'l': '1', 'L': '1', '|': '1', '!': '1', '[': '1', ']': '1',
+        'z': '2', 'Z': '2',
+        's': '5', 'S': '5',
+        'b': '6',
+        'g': '9', 'q': '9',
+        'B': '8',
+    }
+    res = []
+    for char in text:
+        res.append(replacements.get(char, char))
+    return "".join(res)
+
+
 def fix_nik(text: str) -> str:
     """Correct common OCR misreads in NIK (16 digits)."""
-    replacements = {
-        "l": "1", "!": "1", ")": "1", "L": "1", "|": "1", "]": "1",
-        "b": "6", "?": "7", "D": "0", "B": "8", "O": "0",
-    }
-    result = ""
-    for ch in text.strip():
-        result += replacements.get(ch, ch)
+    cleaned = clean_numeric_text(text.strip())
     # Keep only digits and strip to 16
-    digits = re.sub(r"\D", "", result)
+    digits = re.sub(r"\D", "", cleaned)
     return digits[:16] if len(digits) >= 16 else digits
+
+
+def fix_rt_rw(text: str) -> str:
+    """Clean RT/RW field by resolving numeric typos and removing spaces."""
+    cleaned = clean_numeric_text(text)
+    # Remove all whitespace characters
+    cleaned = re.sub(r"\s+", "", cleaned)
+    # Replace common typo characters in RT/RW slash, e.g. backslash or pipe to slash
+    cleaned = cleaned.replace("\\", "/").replace("|", "/")
+    return cleaned
 
 
 def extract_date(text: str) -> Optional[str]:
     """Parse date string from OCR output, return DD-MM-YYYY or None."""
-    # Try DD-MM-YYYY / DD/MM/YYYY patterns
-    m = re.search(r"(\d{1,2})([-/.])(\d{2})\2(\d{4})", text)
+    cleaned = clean_numeric_text(text)
+    # Replace any separator (spaces, dots, slashes, commas, colons) with a single dash
+    cleaned = re.sub(r"[-/. \t,:]+", "-", cleaned)
+    
+    # Try DD-MM-YYYY pattern
+    m = re.search(r"(\d{1,2})-(\d{1,2})-(\d{4})", cleaned)
     if m:
         try:
-            d = datetime.datetime(int(m.group(4)), int(m.group(3)), int(m.group(1)))
+            d = datetime.datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)))
             return d.strftime("%d-%m-%Y")
         except ValueError:
             pass
-    # Try any 3-part numeric date
-    m = re.search(r"(\d{1,4})[-/.](\d{1,2})[-/.](\d{2,4})", text)
+            
+    # Try any 3-part numeric date pattern
+    m = re.search(r"(\d{1,4})-(\d{1,2})-(\d{2,4})", cleaned)
     if m:
         parts = [int(x) for x in m.groups()]
         try:
-            d = datetime.datetime(parts[2] if parts[2] > 31 else parts[0],
-                                  parts[1],
-                                  parts[0] if parts[2] > 31 else parts[2])
+            if parts[0] > 1900: # YYYY-MM-DD
+                d = datetime.datetime(parts[0], parts[1], parts[2])
+            elif parts[2] > 1900: # DD-MM-YYYY
+                d = datetime.datetime(parts[2], parts[1], parts[0])
+            else: # DD-MM-YY fallback
+                year = parts[2] + 1900 if parts[2] > 50 else parts[2] + 2000
+                d = datetime.datetime(year, parts[1], parts[0])
             return d.strftime("%d-%m-%Y")
         except ValueError:
             pass
@@ -207,53 +316,238 @@ def extract_date(text: str) -> Optional[str]:
 
 def classify_gender(text: str) -> str:
     """Use Levenshtein distance to robustly classify gender from noisy OCR text."""
-    t = text.upper().strip()
+    # Clean text to contain only alphabet letters
+    t = re.sub(r"[^A-Z]", "", text.upper().strip())
+    
+    # Simple direct checks
+    if "LAKI" in t or t == "LK" or t.startswith("LAK"):
+        return "L"
+    if "PEREM" in t or t == "PR" or t.startswith("PEM") or "WANITA" in t:
+        return "P"
+        
     if HAS_TEXTDISTANCE:
-        d_laki = textdistance.levenshtein(t, "LAKI-LAKI")
+        d_laki = textdistance.levenshtein(t, "LAKILAKI")
         d_pr   = textdistance.levenshtein(t, "PEREMPUAN")
         return "L" if d_laki <= d_pr else "P"
-    # Simple fallback
-    if "LAKI" in t:
+        
+    # Default fallbacks
+    if "L" in t and "P" not in t:
         return "L"
-    if "PEREMPUAN" in t or "WANITA" in t:
+    if "P" in t and "L" not in t:
         return "P"
     return "L"
 
 
-def yolo_extract(img_bgr: np.ndarray, use_easyocr: bool = True) -> dict:
-    """Run YOLO detection + OCR per detected field crop."""
-    results = _yolo_model.predict(img_bgr, imgsz=(480, 640), iou=0.7, conf=0.5)
-    pil_img = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
+def fix_place_of_birth(text: str) -> str:
+    """Correct common OCR typos in Indonesian places of birth."""
+    t = re.sub(r"[^A-Z]", "", text.upper().strip())
+    
+    # Common direct regex corrections
+    if "YOGYA" in t or "JOGJA" in t or t.startswith("Y") or t.startswith("JOG") or t.startswith("YOG"):
+        return "YOGYAKARTA"
+    if "JAKAR" in t or t.endswith("AKARTA"):
+        return "JAKARTA"
+    if t.endswith("ANDUNG") and (t.startswith("H") or t.startswith("M") or t.startswith("P") or len(t) == 7):
+        return "BANDUNG"
+    if t.endswith("EKALONGAN") or t.endswith("EKALONGAY") or "PEKAL" in t:
+        return "PEKALONGAN"
+    if t.endswith("REBES") or "BREB" in t:
+        return "BREBES"
+    if "SURAB" in t or "SUROB" in t:
+        return "SURABAYA"
+        
+    common_cities = [
+        "BANDUNG", "JAKARTA", "PEKALONGAN", "BREBES", "YOGYAKARTA", "SURABAYA",
+        "SEMARANG", "MEDAN", "MAKASSAR", "PALEMBANG", "BOGOR", "TANGERANG",
+        "BEKASI", "DEPOK", "CIREBON", "TASIKMALAYA", "GARUT", "CIANJUR",
+        "SUKABUMI", "PURWAKARTA", "SUBANG", "SUMEDANG", "MAJALENGKA",
+        "INDRAMAYU", "KUNINGAN", "CIAMIS", "BANJAR", "PANGANDARAN"
+    ]
+    
+    if HAS_TEXTDISTANCE:
+        best_city = t
+        best_dist = 999
+        for city in common_cities:
+            dist = textdistance.levenshtein(t, city)
+            # Only correct if the distance is small (<= 33% of string length)
+            if dist < best_dist and dist <= max(1, len(city) // 3):
+                best_dist = dist
+                best_city = city
+        return best_city
+        
+    return t
 
-    data: dict = {}
-    for result in results:
-        for box in result.boxes:
-            x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].tolist()]
-            cls = result.names[int(box.cls[0].item())]
-            crop_pil = pil_img.crop((x1, y1, x2, y2))
-            crop_bgr = cv2.cvtColor(np.array(crop_pil), cv2.COLOR_RGB2BGR)
-            text = ocr_crop(crop_bgr, use_easyocr).strip()
-            data[cls] = text
 
-    # Post-process NIK
+def yolo_extract(img_proc: np.ndarray, use_easyocr: bool = True, img_raw: Optional[np.ndarray] = None) -> dict:
+    """
+    Run YOLO detection + OCR.
+    If img_raw is provided, performs ensemble detection on raw & preprocessed images
+    and crops from a high-res (1920x1440) canvas for superior OCR accuracy.
+    Otherwise, falls back to legacy cropping on img_proc.
+    """
+    if img_raw is None:
+        # Legacy fallback mode: crop directly from img_proc
+        results = _yolo_model.predict(img_proc, imgsz=(480, 640), iou=0.7, conf=0.15)
+        pil_img = Image.fromarray(cv2.cvtColor(img_proc, cv2.COLOR_BGR2RGB))
+        data: dict = {}
+        for result in results:
+            for box in result.boxes:
+                x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].tolist()]
+                cls = result.names[int(box.cls[0].item())]
+                w = x2 - x1
+                h = y2 - y1
+                # Strict size filter: height must be <= 60, width <= 450 to filter massive noise
+                if w > 450 or h > 60:
+                    continue
+                
+                # Apply targeted padding
+                x1_p = x1
+                x2_p = x2
+                if cls == 'nik':
+                    # Add 10px horizontal padding to prevent clipping first/last digits
+                    x1_p = max(0, x1 - 10)
+                    x2_p = min(640, x2 + 10)
+                    
+                # Apply vertical padding of 2 pixels to prevent clipping ascenders/descenders
+                y1_p = max(0, y1 - 2)
+                y2_p = min(480, y2 + 2)
+                
+                crop_pil = pil_img.crop((x1_p, y1_p, x2_p, y2_p))
+                crop_bgr = cv2.cvtColor(np.array(crop_pil), cv2.COLOR_RGB2BGR)
+                text = ocr_crop(crop_bgr, use_easyocr).strip()
+                data[cls] = text
+        # Post-process NIK
+        if "nik" in data:
+            data["nik"] = fix_nik(data["nik"])
+        # Post-process RT/RW
+        if "rt_rw" in data:
+            data["rt_rw"] = fix_rt_rw(data["rt_rw"])
+            
+        # Heuristically correct date and gender from NIK digits (source of truth)
+        nik_bdate, nik_gender = parse_date_and_gender_from_nik(data.get("nik", ""))
+        
+        # Post-process gender
+        if "jk" in data:
+            data["jk"] = classify_gender(data["jk"])
+        if nik_gender:
+            data["jk"] = nik_gender
+            
+        # Split TTL (tempat/tanggal lahir) field
+        if "ttl" in data:
+            ttl = data["ttl"]
+            m = re.search(r"\d", ttl)
+            if m:
+                data["tempat_lahir"] = fix_place_of_birth(ttl[: m.start()].strip().rstrip(","))
+                data["tgl_lahir"]    = extract_date(ttl[m.start():])
+            else:
+                data["tempat_lahir"] = fix_place_of_birth(ttl)
+                
+        if nik_bdate:
+            data["tgl_lahir"] = nik_bdate
+        # Flatten address
+        alamat_parts = [
+            data.get("alamat", ""),
+            data.get("rt_rw", ""),
+            data.get("kel_desa", ""),
+            data.get("kecamatan", ""),
+        ]
+        data["full_address"] = ", ".join(p for p in alamat_parts if p)
+        return data
+
+    # Ensemble optimized mode
+    img_raw_640 = cv2.resize(img_raw, (640, 480))
+    img_blur = cv2.GaussianBlur(img_raw_640, (3, 3), 0)
+    angle = get_deskew_angle(img_blur)
+    
+    img_high_raw = cv2.resize(img_raw, (1920, 1440))
+    img_high_rotated = rotate_image(img_high_raw, angle)
+    
+    # Predict on both raw and legacy preprocessed
+    res_raw = _yolo_model.predict(img_raw_640, imgsz=(480, 640), iou=0.7, conf=0.15)
+    res_legacy = _yolo_model.predict(img_proc, imgsz=(480, 640), iou=0.7, conf=0.15)
+    
+    best_boxes = {}
+    for box in res_raw[0].boxes:
+        cls = res_raw[0].names[int(box.cls[0].item())]
+        conf = box.conf[0].item()
+        xyxy = box.xyxy[0].tolist()
+        w = xyxy[2] - xyxy[0]
+        h = xyxy[3] - xyxy[1]
+        # Strict size filter: height must be <= 60, width <= 450 to filter massive noise
+        if w > 450 or h > 60:
+            continue
+        best_boxes[cls] = (conf, xyxy, 'raw')
+        
+    for box in res_legacy[0].boxes:
+        cls = res_legacy[0].names[int(box.cls[0].item())]
+        conf = box.conf[0].item()
+        xyxy = box.xyxy[0].tolist()
+        w = xyxy[2] - xyxy[0]
+        h = xyxy[3] - xyxy[1]
+        # Strict size filter: height must be <= 60, width <= 450 to filter massive noise
+        if w > 450 or h > 60:
+            continue
+        if cls not in best_boxes or conf > best_boxes[cls][0]:
+            best_boxes[cls] = (conf, xyxy, 'legacy')
+            
+    data = {}
+    pil_high_raw = Image.fromarray(cv2.cvtColor(img_high_raw, cv2.COLOR_BGR2RGB))
+    pil_high_rotated = Image.fromarray(cv2.cvtColor(img_high_rotated, cv2.COLOR_BGR2RGB))
+    
+    for cls, (conf, xyxy, src) in best_boxes.items():
+        x1, y1, x2, y2 = xyxy
+        # Base coordinates scaled to high-res 1920 space
+        x1_h = int(x1 * 3.0)
+        y1_h = int(y1 * 3.0)
+        x2_h = int(x2 * 3.0)
+        y2_h = int(y2 * 3.0)
+        
+        if cls == 'nik':
+            # Add 10px horizontal padding (30px in 1920 space) for NIK to prevent
+            # cutting off first/last digits. fix_nik filters out non-digits.
+            x1_h = max(0, x1_h - 30)
+            x2_h = min(1920, x2_h + 30)
+            
+        # Vertical padding of 2px (6px in 1920 space) for all fields to prevent cutting ascenders/descenders
+        y1_h = max(0, y1_h - 6)
+        y2_h = min(1440, y2_h + 6)
+        
+        if src == 'raw':
+            crop_pil = pil_high_raw.crop((x1_h, y1_h, x2_h, y2_h))
+        else:
+            crop_pil = pil_high_rotated.crop((x1_h, y1_h, x2_h, y2_h))
+            
+        crop_bgr = cv2.cvtColor(np.array(crop_pil), cv2.COLOR_RGB2BGR)
+        crop_enhanced = enhance_crop(crop_bgr)
+        text = ocr_crop(crop_enhanced, use_easyocr).strip()
+        data[cls] = text
+        
+    # Post-process extracted fields
     if "nik" in data:
         data["nik"] = fix_nik(data["nik"])
-
-    # Post-process gender
+    if "rt_rw" in data:
+        data["rt_rw"] = fix_rt_rw(data["rt_rw"])
+        
+    # Heuristically correct date and gender from NIK digits (source of truth)
+    nik_bdate, nik_gender = parse_date_and_gender_from_nik(data.get("nik", ""))
+    
     if "jk" in data:
         data["jk"] = classify_gender(data["jk"])
-
-    # Split TTL (tempat/tanggal lahir) field
+    if nik_gender:
+        data["jk"] = nik_gender
+        
     if "ttl" in data:
         ttl = data["ttl"]
         m = re.search(r"\d", ttl)
         if m:
-            data["tempat_lahir"] = ttl[: m.start()].strip().rstrip(",")
+            data["tempat_lahir"] = fix_place_of_birth(ttl[: m.start()].strip().rstrip(",").rstrip("."))
             data["tgl_lahir"]    = extract_date(ttl[m.start():])
         else:
-            data["tempat_lahir"] = ttl
-
-    # Flatten address
+            data["tempat_lahir"] = fix_place_of_birth(ttl)
+            
+    if nik_bdate:
+        data["tgl_lahir"] = nik_bdate
+            
     alamat_parts = [
         data.get("alamat", ""),
         data.get("rt_rw", ""),
@@ -261,7 +555,7 @@ def yolo_extract(img_bgr: np.ndarray, use_easyocr: bool = True) -> dict:
         data.get("kecamatan", ""),
     ]
     data["full_address"] = ", ".join(p for p in alamat_parts if p)
-
+    
     return data
 
 
@@ -335,7 +629,7 @@ async def ocr_ktp(
 
         # Choose pipeline: YOLO (preferred) → full-page Tesseract fallback
         if _yolo_model is not None:
-            data = yolo_extract(img_proc, use_easyocr=use_easyocr)
+            data = yolo_extract(img_proc, use_easyocr=use_easyocr, img_raw=img_bgr)
             pipeline_used = f"yolo+{'easyocr' if use_easyocr else 'tesseract'}"
         elif HAS_TESSERACT:
             data = tesseract_fullpage_extract(img_proc)

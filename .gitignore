@@ -53,3 +53,8 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# OCR Training Datasets and runs
+ocr_service/datasets/
+ocr_service/runs/
+
