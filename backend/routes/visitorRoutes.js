@@ -140,6 +140,29 @@ router.post('/upload-photo', upload.single('file'), async (req, res) => {
   }
 });
 
+// POST /api/v1/visitor/upload-attachment (Fast direct upload without Python face/OCR scanning)
+router.post('/upload-attachment', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'File is required.' });
+    }
+
+    const info = await db.run(`
+      INSERT INTO MASTER_ATTACHMENT (ATTACHMENT_NAME, MIMETYPE, SIZE, FILE_PATH)
+      VALUES (?, ?, ?, ?)
+    `, [req.file.originalname, req.file.mimetype, req.file.size, req.file.path]);
+    const attachmentId = info.lastInsertRowid;
+
+    return res.json({
+      attachmentId: attachmentId,
+      filePath: req.file.path,
+      message: 'File uploaded successfully.'
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
 // POST /api/v1/visitor/register
 router.post('/register', async (req, res) => {
   try {

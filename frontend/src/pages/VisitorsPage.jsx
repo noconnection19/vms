@@ -318,7 +318,7 @@ export default function VisitorsPage() {
     formData.append('file', file);
 
     try {
-      const res = await fetch(`${API_BASE}/visitor/upload-photo`, {
+      const res = await fetch(`${API_BASE}/visitor/upload-attachment`, {
         method: 'POST',
         body: formData,
       });
@@ -346,7 +346,7 @@ export default function VisitorsPage() {
     formData.append('file', file);
 
     try {
-      const res = await fetch(`${API_BASE}/visitor/upload-photo`, {
+      const res = await fetch(`${API_BASE}/visitor/upload-attachment`, {
         method: 'POST',
         body: formData,
       });
