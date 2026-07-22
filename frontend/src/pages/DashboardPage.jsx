@@ -34,6 +34,12 @@ export default function DashboardPage({ setActivePage }) {
     totalVisitors: 0,
     activeCheckIns: 0,
     todayCheckOuts: 0,
+    totalUserEmployee: 0,
+    totalUserVisitor: 0,
+    activeUserEmployee: 0,
+    activeUserVisitor: 0,
+    todayCheckOutsEmployee: 0,
+    todayCheckOutsVisitor: 0,
     gateStatus: 'OPERATIONAL',
   });
   const [recentVisits, setRecentVisits] = useState([]);
@@ -95,6 +101,12 @@ export default function DashboardPage({ setActivePage }) {
         totalVisitors: statsData.totalVisitors || 0,
         activeCheckIns: statsData.activeCheckIns || 0,
         todayCheckOuts: statsData.todayCheckOuts || 0,
+        totalUserEmployee: statsData.totalUserEmployee ?? 0,
+        totalUserVisitor: statsData.totalUserVisitor ?? 0,
+        activeUserEmployee: statsData.activeUserEmployee ?? 0,
+        activeUserVisitor: statsData.activeUserVisitor ?? 0,
+        todayCheckOutsEmployee: statsData.todayCheckOutsEmployee ?? 0,
+        todayCheckOutsVisitor: statsData.todayCheckOutsVisitor ?? 0,
         gateStatus: statsData.gateStatus || 'OPERATIONAL',
       });
       if (visitsData.data) {
@@ -487,66 +499,112 @@ export default function DashboardPage({ setActivePage }) {
     );
   }
 
-  const statCards = [
-    {
-      label: 'Total Visitors',
-      value: loading ? '...' : stats.totalVisitors,
-      sub: 'Total registered visitors',
-      icon: Users,
-      color: 'text-slate-300',
-      iconBg: 'bg-slate-800',
-    },
-    {
-      label: 'Active Visitors',
-      value: loading ? '...' : stats.activeCheckIns,
-      sub: 'Currently inside building',
-      icon: SignIn,
-      color: 'text-emerald-400',
-      iconBg: 'bg-emerald-500/10',
-    },
-    {
-      label: 'Today Check-Outs',
-      value: loading ? '...' : stats.todayCheckOuts,
-      sub: 'Completed visits today',
-      icon: SignOut,
-      color: 'text-amber-400',
-      iconBg: 'bg-amber-500/10',
-    },
-    {
-      label: 'Gate Status',
-      value: loading ? '...' : stats.gateStatus,
-      sub: 'Gate sensor connected',
-      icon: Plugs,
-      color: 'text-emerald-400',
-      iconBg: 'bg-emerald-500/10',
-      isText: true,
-    },
-  ];
-
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((card) => {
-          const Icon = card.icon;
-          return (
-            <div
-              key={card.label}
-              className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 hover:border-slate-700 transition-colors"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-400">{card.label}</span>
-                <div className={`w-8 h-8 rounded-lg ${card.iconBg} flex items-center justify-center`}>
-                  <Icon size={15} className={card.color} />
-                </div>
-              </div>
-              <div className={`${card.isText ? 'text-base font-bold' : 'text-3xl font-bold'} ${card.color} tracking-tight`}>
-                {card.value}
-              </div>
-              <div className="text-[11px] text-slate-500">{card.sub}</div>
+        {/* Card 1: Total User */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 hover:border-slate-700 transition-colors">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xs font-semibold text-white">Total User</h2>
+              <p className="text-[11px] text-slate-500 mt-0.5">Total registered user</p>
             </div>
-          );
-        })}
+            <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center">
+              <Users size={15} className="text-slate-300" />
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-1">
+            <div className="flex-1 text-center">
+              <div className="text-2xl font-bold text-white tracking-tight">
+                {loading ? '...' : stats.totalUserEmployee}
+              </div>
+              <div className="text-[11px] text-slate-400 font-medium mt-0.5">Employee</div>
+            </div>
+            <div className="w-px h-8 bg-slate-800 mx-3" />
+            <div className="flex-1 text-center">
+              <div className="text-2xl font-bold text-white tracking-tight">
+                {loading ? '...' : stats.totalUserVisitor}
+              </div>
+              <div className="text-[11px] text-slate-400 font-medium mt-0.5">Visitor</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 2: Active User */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 hover:border-slate-700 transition-colors">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xs font-semibold text-white">Active User</h2>
+              <p className="text-[11px] text-slate-500 mt-0.5">Currently inside building</p>
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+              <SignIn size={15} className="text-emerald-400" />
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-1">
+            <div className="flex-1 text-center">
+              <div className="text-2xl font-bold text-emerald-400 tracking-tight">
+                {loading ? '...' : stats.activeUserEmployee}
+              </div>
+              <div className="text-[11px] text-slate-400 font-medium mt-0.5">Employee</div>
+            </div>
+            <div className="w-px h-8 bg-slate-800 mx-3" />
+            <div className="flex-1 text-center">
+              <div className="text-2xl font-bold text-emerald-400 tracking-tight">
+                {loading ? '...' : stats.activeUserVisitor}
+              </div>
+              <div className="text-[11px] text-slate-400 font-medium mt-0.5">Visitor</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 3: Today Check-Outs */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 hover:border-slate-700 transition-colors">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xs font-semibold text-white">Today Check-Outs</h2>
+              <p className="text-[11px] text-slate-500 mt-0.5">Completed visits today</p>
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+              <SignOut size={15} className="text-amber-400" />
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-1">
+            <div className="flex-1 text-center">
+              <div className="text-2xl font-bold text-amber-400 tracking-tight">
+                {loading ? '...' : stats.todayCheckOutsEmployee}
+              </div>
+              <div className="text-[11px] text-slate-400 font-medium mt-0.5">Employee</div>
+            </div>
+            <div className="w-px h-8 bg-slate-800 mx-3" />
+            <div className="flex-1 text-center">
+              <div className="text-2xl font-bold text-amber-400 tracking-tight">
+                {loading ? '...' : stats.todayCheckOutsVisitor}
+              </div>
+              <div className="text-[11px] text-slate-400 font-medium mt-0.5">Visitor</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 4: Gate Status */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 hover:border-slate-700 transition-colors flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xs font-semibold text-white">Gate Status</h2>
+              <p className="text-[11px] text-slate-500 mt-0.5">Gate sensor connected</p>
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+              <Plugs size={15} className="text-emerald-400" />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-sm font-bold text-emerald-400 tracking-wide uppercase">
+              {loading ? '...' : stats.gateStatus}
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Grid of Employee & Visitor Visits */}

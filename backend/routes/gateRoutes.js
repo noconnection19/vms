@@ -221,16 +221,59 @@ router.get('/visits', async (req, res) => {
 // GET /api/v1/gate/stats
 router.get('/stats', async (req, res) => {
   try {
-    const totalRes = await db.get('SELECT COUNT(*) as count FROM MASTER_USER');
-    const activeRes = await db.get('SELECT COUNT(*) as count FROM TRANSACTION_VISIT WHERE CHECK_OUT IS NULL');
+    const totalEmpRes = await db.get("SELECT COUNT(*) as count FROM MASTER_USER WHERE USER_TYPE = 'EMPLOYEE'");
+    const totalVisRes = await db.get("SELECT COUNT(*) as count FROM MASTER_USER WHERE USER_TYPE != 'EMPLOYEE' OR USER_TYPE IS NULL");
     
+    const activeEmpRes = await db.get(`
+      SELECT COUNT(*) as count 
+      FROM TRANSACTION_VISIT v
+      LEFT JOIN MASTER_CARD c ON v.CARD_NO = c.CARD_NO
+      LEFT JOIN MASTER_USER u ON c.PHONE_NO = u.PHONE_NO
+      WHERE v.CHECK_OUT IS NULL AND u.USER_TYPE = 'EMPLOYEE'
+    `);
+    const activeVisRes = await db.get(`
+      SELECT COUNT(*) as count 
+      FROM TRANSACTION_VISIT v
+      LEFT JOIN MASTER_CARD c ON v.CARD_NO = c.CARD_NO
+      LEFT JOIN MASTER_USER u ON c.PHONE_NO = u.PHONE_NO
+      WHERE v.CHECK_OUT IS NULL AND (u.USER_TYPE != 'EMPLOYEE' OR u.USER_TYPE IS NULL)
+    `);
+
     const todayStr = new Date().toISOString().substring(0, 10);
-    const todayRes = await db.get('SELECT COUNT(*) as count FROM TRANSACTION_VISIT WHERE CHECK_OUT IS NOT NULL AND DATE(CHECK_OUT) = ?::date', [todayStr]);
+    const todayEmpRes = await db.get(`
+      SELECT COUNT(*) as count 
+      FROM TRANSACTION_VISIT v
+      LEFT JOIN MASTER_CARD c ON v.CARD_NO = c.CARD_NO
+      LEFT JOIN MASTER_USER u ON c.PHONE_NO = u.PHONE_NO
+      WHERE v.CHECK_OUT IS NOT NULL AND DATE(v.CHECK_OUT) = ?::date AND u.USER_TYPE = 'EMPLOYEE'
+    `, [todayStr]);
+    const todayVisRes = await db.get(`
+      SELECT COUNT(*) as count 
+      FROM TRANSACTION_VISIT v
+      LEFT JOIN MASTER_CARD c ON v.CARD_NO = c.CARD_NO
+      LEFT JOIN MASTER_USER u ON c.PHONE_NO = u.PHONE_NO
+      WHERE v.CHECK_OUT IS NOT NULL AND DATE(v.CHECK_OUT) = ?::date AND (u.USER_TYPE != 'EMPLOYEE' OR u.USER_TYPE IS NULL)
+    `, [todayStr]);
+
+    const totalEmp = parseInt(totalEmpRes ? (totalEmpRes.count || totalEmpRes.COUNT || 0) : 0, 10);
+    const totalVis = parseInt(totalVisRes ? (totalVisRes.count || totalVisRes.COUNT || 0) : 0, 10);
+
+    const activeEmp = parseInt(activeEmpRes ? (activeEmpRes.count || activeEmpRes.COUNT || 0) : 0, 10);
+    const activeVis = parseInt(activeVisRes ? (activeVisRes.count || activeVisRes.COUNT || 0) : 0, 10);
+
+    const todayEmp = parseInt(todayEmpRes ? (todayEmpRes.count || todayEmpRes.COUNT || 0) : 0, 10);
+    const todayVis = parseInt(todayVisRes ? (todayVisRes.count || todayVisRes.COUNT || 0) : 0, 10);
 
     return res.json({
-      totalVisitors: parseInt(totalRes ? (totalRes.count || totalRes.COUNT || 0) : 0, 10),
-      activeCheckIns: parseInt(activeRes ? (activeRes.count || activeRes.COUNT || 0) : 0, 10),
-      todayCheckOuts: parseInt(todayRes ? (todayRes.count || todayRes.COUNT || 0) : 0, 10),
+      totalVisitors: totalEmp + totalVis,
+      activeCheckIns: activeEmp + activeVis,
+      todayCheckOuts: todayEmp + todayVis,
+      totalUserEmployee: totalEmp,
+      totalUserVisitor: totalVis,
+      activeUserEmployee: activeEmp,
+      activeUserVisitor: activeVis,
+      todayCheckOutsEmployee: todayEmp,
+      todayCheckOutsVisitor: todayVis,
       gateStatus: 'OPERATIONAL'
     });
   } catch (err) {
