@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  ocr_service:
+    build:
+      context: ./ocr_service
+      dockerfile: Dockerfile
+    container_name: vms_ocr_service
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+    volumes:
+      - ./ocr_service/models:/app/models
+    restart: unless-stopped
